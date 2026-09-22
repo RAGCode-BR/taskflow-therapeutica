@@ -26,7 +26,9 @@ integracoes externas via funcoes de servidor, nunca direto do navegador.
 - `src/integrations/supabase/client.ts` (navegador) e `client.server.ts` (servidor): clientes Supabase.
 - `src/lib/*.functions.ts`: funcoes de servidor do TanStack Start (admin de usuarios, formatacao/importacao de ata via IA, relatorio de cliente).
 - `supabase/migrations`: schema que deve ser aplicado no banco novo (evolui por migrations incrementais, sem baseline unico — ver contagem crescente ao longo do tempo).
-- `vite.pages.config.ts`: build estatico alternativo para GitHub Pages. O deploy principal e Vercel (`vercel.json`).
+- `vite.config.ts`: builds SSR para Cloudflare Workers e Vercel, selecionados pelos scripts do `package.json`.
+- `wrangler.jsonc`: metadados e compatibilidade do Worker; nao contem secrets.
+- `vite.pages.config.ts`: build estatico alternativo para GitHub Pages.
 
 ## Modelo de ambientes (workspaces)
 

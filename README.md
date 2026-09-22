@@ -50,7 +50,7 @@ pela aplicação está em `src/assets/therapeutica-logo.png`.
 
 - React 19 e TypeScript.
 - TanStack Router e TanStack Start.
-- Vite 7 e Nitro com preset para Vercel.
+- Vite 7 e Nitro com alvos para Cloudflare Workers e Vercel.
 - TanStack Query.
 - Tailwind CSS 4 e componentes Radix UI/shadcn.
 - Supabase Postgres, Auth, Storage, Realtime e Row Level Security.
@@ -62,7 +62,7 @@ pela aplicação está em `src/assets/therapeutica-logo.png`.
 
 ## Requisitos
 
-- Node.js 20 ou superior.
+- Node.js 22 ou superior.
 - npm.
 - Acesso autorizado ao projeto Supabase da Therapeutica para operações de
   infraestrutura.
@@ -120,17 +120,21 @@ servidor. Eles nunca podem ser importados por componentes do navegador.
 
 ## Comandos
 
-| Comando               | Finalidade                                           |
-| --------------------- | ---------------------------------------------------- |
-| `npm run dev`         | Inicia o ambiente local.                             |
-| `npm run build`       | Gera o build de produção para Vercel.                |
-| `npm run preview`     | Executa uma prévia do build.                         |
-| `npm test`            | Executa os testes com Vitest.                        |
-| `npx tsc --noEmit`    | Valida os tipos TypeScript.                          |
-| `npm run lint`        | Executa ESLint e Prettier em modo de validação.      |
-| `npm run format`      | Formata o projeto com Prettier.                      |
-| `npm run build:pages` | Gera o build estático alternativo para GitHub Pages. |
-| `npm run docs:codigo` | Atualiza a documentação gerada do código.            |
+| Comando                             | Finalidade                                           |
+| ----------------------------------- | ---------------------------------------------------- |
+| `npm run dev`                       | Inicia o ambiente local.                             |
+| `npm run build`                     | Gera o build de produção para Vercel.                |
+| `npm run build:cloudflare`          | Gera o Worker SSR e seus assets em `.output`.        |
+| `npm run preview:cloudflare`        | Executa o build no runtime local do Cloudflare.      |
+| `npm run deploy:cloudflare:dry-run` | Valida o pacote Cloudflare sem publicar.             |
+| `npm run deploy:cloudflare`         | Publica no Cloudflare Workers.                       |
+| `npm run preview`                   | Executa uma prévia do build padrão.                  |
+| `npm test`                          | Executa os testes com Vitest.                        |
+| `npx tsc --noEmit`                  | Valida os tipos TypeScript.                          |
+| `npm run lint`                      | Executa ESLint e Prettier em modo de validação.      |
+| `npm run format`                    | Formata o projeto com Prettier.                      |
+| `npm run build:pages`               | Gera o build estático alternativo para GitHub Pages. |
+| `npm run docs:codigo`               | Atualiza a documentação gerada do código.            |
 
 O build usa até 4 GB de heap devido ao volume atual de módulos.
 
@@ -257,15 +261,26 @@ interface e políticas RLS ainda devem receber maior cobertura de integração.
 
 ## Deploy
 
-O deploy principal está preparado para Vercel:
+O sistema está preparado para Cloudflare Workers com renderização SSR, funções
+de servidor e assets/PWA no mesmo deploy:
+
+```bash
+npm run deploy:cloudflare:dry-run
+npm run deploy:cloudflare
+```
+
+As instruções completas de variáveis, secrets, CI e domínio estão em
+[`docs/DEPLOY-CLOUDFLARE.md`](docs/DEPLOY-CLOUDFLARE.md).
+
+O fluxo Vercel continua disponível separadamente:
 
 ```bash
 npm run build
 ```
 
-O resultado segue o formato Vercel Build Output em `.vercel/output`. Configure
-na plataforma todas as variáveis públicas e secrets necessários antes de
-publicar.
+O build Cloudflare fica em `.output`; o resultado Vercel segue seu Build Output
+em `.vercel/output`. Configure na plataforma escolhida todas as variáveis
+públicas e secrets necessários antes de publicar.
 
 Após o primeiro domínio público:
 
@@ -280,6 +295,7 @@ Após o primeiro domínio público:
 - [Configuração da Therapeutica](THERAPEUTICA-SETUP.md)
 - [Arquitetura detalhada](docs/ARQUITETURA.md)
 - [Supabase da Therapeutica](docs/SUPABASE-NOVO.md)
+- [Deploy no Cloudflare Workers](docs/DEPLOY-CLOUDFLARE.md)
 - [Convenções das rotas](src/routes/README.md)
 - [Guia de estudo](docs/GUIA-DE-ESTUDO.md)
 - [Ideias futuras](IDEIAS_FUTURAS.md)
