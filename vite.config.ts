@@ -83,7 +83,15 @@ export default defineConfig({
       // arquivos do cache e falhar ao abrir Dashboard/Clientes sem internet.
       registerType: "prompt",
       injectRegister: "auto",
-      includeAssets: ["therapeutica-logo.png"],
+      includeAssets: [
+        "favicon.ico",
+        "favicon-16x16.png",
+        "favicon-32x32.png",
+        "apple-touch-icon.png",
+        "taskflow-icon-192.png",
+        "taskflow-icon-512.png",
+        "therapeutica-logo.png",
+      ],
       manifest: {
         name: "Therapeutica - Task Flow",
         short_name: "Task Flow",
@@ -93,8 +101,14 @@ export default defineConfig({
         display: "standalone",
         icons: [
           {
-            src: "/therapeutica-logo.png",
-            sizes: "1900x1900",
+            src: "/taskflow-icon-192.png",
+            sizes: "192x192",
+            type: "image/png",
+            purpose: "any maskable",
+          },
+          {
+            src: "/taskflow-icon-512.png",
+            sizes: "512x512",
             type: "image/png",
             purpose: "any maskable",
           },

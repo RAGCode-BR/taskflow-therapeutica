@@ -8,7 +8,6 @@ import { OfflineSyncManager } from "@/components/OfflineSyncManager";
 import { OfflineConflictDialog } from "@/components/OfflineConflictDialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import therapeuticaLogo from "@/assets/therapeutica-logo.png";
 
 const isGitHubPages = import.meta.env.VITE_GITHUB_PAGES === "true";
 
@@ -49,8 +48,10 @@ export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()(
         rel: "stylesheet",
         href: "https://fonts.googleapis.com/css2?family=Architects+Daughter&family=Caveat:wght@400;500;600;700&family=Indie+Flower&family=Kalam:wght@400;700&family=Patrick+Hand&family=Shadows+Into+Light&display=swap",
       },
-      { rel: "icon", type: "image/png", href: therapeuticaLogo },
-      { rel: "apple-touch-icon", href: therapeuticaLogo },
+      { rel: "icon", type: "image/x-icon", href: "/favicon.ico" },
+      { rel: "icon", type: "image/png", sizes: "32x32", href: "/favicon-32x32.png" },
+      { rel: "icon", type: "image/png", sizes: "16x16", href: "/favicon-16x16.png" },
+      { rel: "apple-touch-icon", sizes: "180x180", href: "/apple-touch-icon.png" },
       { rel: "manifest", href: "/manifest.webmanifest" },
     ],
   }),
