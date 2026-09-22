@@ -1,0 +1,329 @@
+import { useCallback, useEffect, useMemo, useRef } from "react";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/use-auth";
+import { useProfiles, useTaskCollaborators } from "@/hooks/use-data";
+import { activityToast } from "@/lib/activity-toast";
+import { isConversationRoom, unreadMessageCount } from "@/lib/task-conversations";
+import { isOffline } from "@/lib/offline-sync";
+import { saveConversationRead } from "@/lib/save-conversation-read";
+import { toast } from "sonner";
+
+type RoomTask = {
+  id: string;
+  title: string;
+  completed_at: string | null;
+  status: string | null;
+  deleted_at: string | null;
+  assignee_id: string | null;
+  created_by: string | null;
+  client_id: string | null;
+  conversation_closed_at: string | null;
+};
+type Message = {
+  id: string;
+  task_id: string;
+  author_id: string | null;
+  body: string;
+  created_at: string;
+  reply_to_id: string | null;
+  edited_at: string | null;
+};
+type Read = { task_id: string; last_read_at: string; manual_unread: boolean };
+
+const roomsKey = ["task-conversation-rooms"] as const;
+const messagesKey = ["task-conversation-messages"] as const;
+const readsKey = (userId?: string) => ["task-conversation-reads", userId] as const;
+
+/**
+ * As "salas" da tela de Conversas: tarefas que a pessoa pode ver (a RLS de
+ * `comments` recorta por ambiente/participação — e, para admin, deixa ver também
+ * as conversas do próprio ambiente em que ele não participa), que não estão
+ * concluídas e têm ao menos uma mensagem. Traz mensagens, ponteiro de leitura e
+ * o conjunto `myRoomIds` — as salas em que a pessoa participa de fato
+ * (responsável, criador ou colaborador), que é o que separa "Minhas conversas"
+ * de "Outras conversas".
+ */
+export function useTaskConversations() {
+  const { user } = useAuth();
+  const { data: collaborations = [] } = useTaskCollaborators();
+
+  const messages = useQuery({
+    queryKey: messagesKey,
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("comments") as any)
+        .select("id, task_id, author_id, body, created_at, reply_to_id, edited_at")
+        .order("created_at", { ascending: true });
+      if (error) throw error;
+      return (data ?? []) as Message[];
+    },
+  });
+
+  const taskIds = useMemo(
+    () => Array.from(new Set((messages.data ?? []).map((m) => m.task_id))),
+    [messages.data],
+  );
+
+  const rooms = useQuery({
+    queryKey: [...roomsKey, taskIds],
+    enabled: !!user?.id && taskIds.length > 0,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("tasks") as any)
+        .select(
+          "id, title, completed_at, status, deleted_at, assignee_id, created_by, client_id, conversation_closed_at",
+        )
+        .in("id", taskIds);
+      if (error) throw error;
+      return (data ?? []) as RoomTask[];
+    },
+  });
+
+  const reads = useQuery({
+    queryKey: readsKey(user?.id),
+    enabled: !!user?.id,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("task_conversation_reads") as any)
+        .select("task_id, last_read_at, manual_unread")
+        .eq("user_id", user!.id);
+      if (error) throw error;
+      return (data ?? []) as Read[];
+    },
+  });
+
+  const messagesByTask = useMemo(() => {
+    const map = new Map<string, Message[]>();
+    (messages.data ?? []).forEach((m) => {
+      const list = map.get(m.task_id) ?? [];
+      list.push(m);
+      map.set(m.task_id, list);
+    });
+    return map;
+  }, [messages.data]);
+
+  const lastReadByTask = useMemo(() => {
+    const map = new Map<string, string>();
+    (reads.data ?? []).forEach((r) => map.set(r.task_id, r.last_read_at));
+    return map;
+  }, [reads.data]);
+
+  const manuallyUnreadTaskIds = useMemo(
+    () =>
+      new Set((reads.data ?? []).filter((read) => read.manual_unread).map((read) => read.task_id)),
+    [reads.data],
+  );
+
+  const roomTasks = useMemo(
+    () =>
+      (rooms.data ?? []).filter((task) => isConversationRoom(task, messagesByTask.has(task.id))),
+    [rooms.data, messagesByTask],
+  );
+
+  // Salas em que a pessoa participa de fato — o mesmo vínculo que a RLS usa em
+  // can_access_task_conversation (responsável, criador, colaborador).
+  const myRoomIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!user?.id) return ids;
+    const collabTasks = new Set(
+      collaborations.filter((c) => c.collaborator_id === user.id).map((c) => c.task_id),
+    );
+    roomTasks.forEach((task) => {
+      if (task.assignee_id === user.id || task.created_by === user.id || collabTasks.has(task.id)) {
+        ids.add(task.id);
+      }
+    });
+    return ids;
+  }, [roomTasks, collaborations, user?.id]);
+
+  return {
+    roomTasks,
+    myRoomIds,
+    messagesByTask,
+    lastReadByTask,
+    manuallyUnreadTaskIds,
+    allMessages: messages.data ?? [],
+    isLoading: messages.isLoading || rooms.isLoading,
+  };
+}
+
+/** Marca a conversa como lida e força o badge a recalcular na hora. */
+export function useMarkConversationRead() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  return useCallback(
+    async (taskId: string) => {
+      if (!user?.id) return;
+      if (isOffline()) {
+        qc.setQueryData<Read[]>(readsKey(user.id), (current = []) => [
+          ...current.filter((read) => read.task_id !== taskId),
+          { task_id: taskId, last_read_at: new Date().toISOString(), manual_unread: false },
+        ]);
+        return;
+      }
+      try {
+        await saveConversationRead(supabase as any, taskId, false);
+        await qc.invalidateQueries({ queryKey: readsKey(user.id) });
+      } catch (error) {
+        console.warn("[conversas] Não foi possível salvar a leitura:", error);
+        toast.error("Não foi possível atualizar a leitura da conversa. Tente novamente.", {
+          id: "conversation-read-error",
+        });
+      }
+    },
+    [qc, user?.id],
+  );
+}
+
+/** Marca manualmente uma conversa como não lida sem apagar seu histórico de leitura. */
+export function useMarkConversationUnread() {
+  const { user } = useAuth();
+  const qc = useQueryClient();
+  return useCallback(
+    async (taskId: string) => {
+      if (!user?.id) return;
+      if (isOffline()) {
+        qc.setQueryData<Read[]>(readsKey(user.id), (current = []) => [
+          ...current.filter((read) => read.task_id !== taskId),
+          {
+            task_id: taskId,
+            last_read_at:
+              current.find((read) => read.task_id === taskId)?.last_read_at ??
+              new Date(0).toISOString(),
+            manual_unread: true,
+          },
+        ]);
+        return;
+      }
+      try {
+        await saveConversationRead(supabase as any, taskId, true);
+        await qc.invalidateQueries({ queryKey: readsKey(user.id) });
+      } catch (error) {
+        console.warn("[conversas] Não foi possível salvar a leitura:", error);
+        toast.error("Não foi possível atualizar a leitura da conversa. Tente novamente.", {
+          id: "conversation-read-error",
+        });
+      }
+    },
+    [qc, user?.id],
+  );
+}
+
+/** Encerra a conversa sem remover as mensagens registradas na tarefa. */
+export function useCloseTaskConversation() {
+  const qc = useQueryClient();
+  return useCallback(
+    async (taskId: string) => {
+      const { error } = await (supabase.from("tasks") as any)
+        .update({ conversation_closed_at: new Date().toISOString() })
+        .eq("id", taskId);
+      if (error) throw error;
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: roomsKey }),
+        qc.invalidateQueries({ queryKey: ["tasks"] }),
+      ]);
+    },
+    [qc],
+  );
+}
+
+/** Número de mensagens de conversa não lidas para o badge do menu. */
+export function useReopenTaskConversation() {
+  const qc = useQueryClient();
+  return useCallback(
+    async (taskId: string) => {
+      const { error } = await (supabase.from("tasks") as any)
+        .update({ conversation_closed_at: null })
+        .eq("id", taskId);
+      if (error) throw error;
+      await Promise.all([
+        qc.invalidateQueries({ queryKey: roomsKey }),
+        qc.invalidateQueries({ queryKey: ["tasks"] }),
+      ]);
+    },
+    [qc],
+  );
+}
+
+export function useTaskConversationsUnread() {
+  const { user } = useAuth();
+  const { roomTasks, myRoomIds, allMessages, lastReadByTask, manuallyUnreadTaskIds } =
+    useTaskConversations();
+  return useMemo(() => {
+    if (!user?.id) return 0;
+    const unreadByMessage = unreadMessageCount(
+      allMessages,
+      Array.from(myRoomIds),
+      user.id,
+      lastReadByTask,
+    );
+    const activeRoomIds = new Set(roomTasks.map((task) => task.id));
+    const manualOnly = [...manuallyUnreadTaskIds].filter(
+      (taskId) =>
+        activeRoomIds.has(taskId) &&
+        (!myRoomIds.has(taskId) ||
+          !allMessages.some(
+            (message) =>
+              message.task_id === taskId &&
+              message.author_id !== user.id &&
+              Date.parse(message.created_at) > Date.parse(lastReadByTask.get(taskId) ?? ""),
+          )),
+    ).length;
+    return unreadByMessage + manualOnly;
+  }, [user?.id, roomTasks, myRoomIds, allMessages, lastReadByTask, manuallyUnreadTaskIds]);
+}
+
+/**
+ * Atividade de conversa ao vivo em qualquer tela: mantém o cache fresco e mostra
+ * um toast discreto quando OUTRA pessoa manda mensagem numa tarefa que a pessoa
+ * acompanha. Só para as salas próprias — nunca para as próprias mensagens, nem
+ * para as conversas que o admin apenas fiscaliza.
+ */
+export function useTaskConversationRealtime() {
+  const { user } = useAuth();
+  const { data: profiles = [] } = useProfiles();
+  const { myRoomIds } = useTaskConversations();
+  const qc = useQueryClient();
+  const userIdRef = useRef(user?.id);
+  userIdRef.current = user?.id;
+  const myRoomIdsRef = useRef(myRoomIds);
+  myRoomIdsRef.current = myRoomIds;
+
+  useEffect(() => {
+    if (!user?.id) return;
+
+    const nameOf = (id: string | null | undefined) => {
+      const p = profiles.find((item) => item.id === id);
+      return p?.full_name || p?.email || "Alguém";
+    };
+    const titleOf = (taskId: string) => {
+      const rooms = (qc.getQueryData([...roomsKey, undefined]) ?? []) as RoomTask[];
+      const fromCache = (qc.getQueriesData({ queryKey: roomsKey })[0]?.[1] ?? []) as RoomTask[];
+      const list = rooms.length ? rooms : fromCache;
+      return list.find((t) => t.id === taskId)?.title || "uma tarefa";
+    };
+
+    const channel = supabase
+      .channel(`task-conversations-global-${Math.random().toString(36).slice(2)}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "comments" },
+        (payload: any) => {
+          void qc.invalidateQueries({ queryKey: messagesKey });
+          if (payload.eventType !== "INSERT") return;
+          const actor = payload.new?.author_id;
+          if (!actor || actor === userIdRef.current) return;
+          if (!myRoomIdsRef.current.has(payload.new.task_id)) return;
+          activityToast(`${nameOf(actor)} comentou em "${titleOf(payload.new.task_id)}"`);
+        },
+      )
+      .subscribe((status: string, err?: Error) => {
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT" || err) {
+          console.warn("[conversas realtime] canal não conectou:", status, err);
+        }
+      });
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [qc, user?.id, profiles]);
+}

@@ -1,0 +1,112 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { Outlet, createRootRouteWithContext, HeadContent, Scripts } from "@tanstack/react-router";
+import type { ReactNode } from "react";
+import appCss from "../styles.css?url";
+import { AuthProvider } from "@/hooks/use-auth";
+import { OfflineQueryCache } from "@/components/OfflineQueryCache";
+import { OfflineSyncManager } from "@/components/OfflineSyncManager";
+import { OfflineConflictDialog } from "@/components/OfflineConflictDialog";
+import { Toaster } from "@/components/ui/sonner";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import therapeuticaLogo from "@/assets/therapeutica-logo.png";
+
+const isGitHubPages = import.meta.env.VITE_GITHUB_PAGES === "true";
+
+export const Route = createRootRouteWithContext<{ queryClient: QueryClient }>()({
+  head: () => ({
+    meta: [
+      { charSet: "utf-8" },
+      { name: "viewport", content: "width=device-width, initial-scale=1" },
+      { title: "Therapeutica - Task Flow" },
+      {
+        name: "description",
+        content: "Gerenciador de tarefas moderno com Kanban, Lista e Calendário.",
+      },
+      { property: "og:title", content: "Therapeutica - Task Flow" },
+      { name: "twitter:title", content: "Therapeutica - Task Flow" },
+      {
+        property: "og:description",
+        content: "Gerenciador de tarefas moderno com Kanban, Lista e Calendário.",
+      },
+      {
+        name: "twitter:description",
+        content: "Gerenciador de tarefas moderno com Kanban, Lista e Calendário.",
+      },
+      {
+        property: "og:image",
+        content: "/therapeutica-logo.png",
+      },
+      {
+        name: "twitter:image",
+        content: "/therapeutica-logo.png",
+      },
+      { name: "twitter:card", content: "summary_large_image" },
+      { property: "og:type", content: "website" },
+    ],
+    links: [
+      { rel: "stylesheet", href: appCss },
+      {
+        rel: "stylesheet",
+        href: "https://fonts.googleapis.com/css2?family=Architects+Daughter&family=Caveat:wght@400;500;600;700&family=Indie+Flower&family=Kalam:wght@400;700&family=Patrick+Hand&family=Shadows+Into+Light&display=swap",
+      },
+      { rel: "icon", type: "image/png", href: therapeuticaLogo },
+      { rel: "apple-touch-icon", href: therapeuticaLogo },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+    ],
+  }),
+  shellComponent: isGitHubPages ? undefined : RootShell,
+  component: RootComponent,
+  notFoundComponent: () => (
+    <div className="flex min-h-screen items-center justify-center">
+      <div className="text-center">
+        <h1 className="text-6xl font-bold">404</h1>
+        <p className="mt-2 text-muted-foreground">Página não encontrada</p>
+        <a href="/" className="mt-4 inline-block text-primary underline">
+          Voltar ao início
+        </a>
+      </div>
+    </div>
+  ),
+  errorComponent: ({ error }) => (
+    <div className="flex min-h-screen items-center justify-center p-4">
+      <div className="max-w-md text-center">
+        <h1 className="text-xl font-semibold">Algo deu errado</h1>
+        <p className="mt-2 text-sm text-muted-foreground">{error.message}</p>
+      </div>
+    </div>
+  ),
+});
+
+function RootShell({ children }: { children: ReactNode }) {
+  return (
+    <html lang="pt-BR">
+      <head>
+        <HeadContent />
+      </head>
+      <body>
+        {children}
+        <Scripts />
+        <script src="/registerSW.js" />
+      </body>
+    </html>
+  );
+}
+
+function RootComponent() {
+  const { queryClient } = Route.useRouteContext();
+  return (
+    <QueryClientProvider client={queryClient}>
+      <AuthProvider>
+        <OfflineQueryCache queryClient={queryClient}>
+          <OfflineSyncManager />
+          <OfflineConflictDialog />
+          <TooltipProvider>
+            {isGitHubPages ? <HeadContent /> : null}
+            <Outlet />
+            <Toaster richColors position="top-right" />
+          </TooltipProvider>
+        </OfflineQueryCache>
+      </AuthProvider>
+    </QueryClientProvider>
+  );
+}

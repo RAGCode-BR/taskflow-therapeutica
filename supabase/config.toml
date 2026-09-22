@@ -1,0 +1,21 @@
+project_id = "csubegotswfskibzscch"
+
+# These functions validate the bearer token or one-time OAuth state in their
+# own code. OAuth provider callbacks do not carry a Supabase JWT.
+[functions.agenda-events]
+verify_jwt = false
+
+[functions.google-calendar-oauth]
+verify_jwt = false
+
+[functions.google-calendar-sync]
+verify_jwt = false
+
+[functions.instagram-oauth-callback]
+verify_jwt = false
+
+# Chamada pelo pg_cron/pg_net (ou testada na mão), nunca pelo navegador de um
+# usuário — a própria função valida um segredo (CRON_SECRET), não faz sentido
+# também exigir um JWT da plataforma pra chegar até esse código.
+[functions.instagram-insights-sync]
+verify_jwt = false

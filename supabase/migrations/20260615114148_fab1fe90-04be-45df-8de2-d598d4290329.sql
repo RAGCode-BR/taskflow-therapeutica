@@ -1,0 +1,2 @@
+ALTER TABLE public.comments ADD COLUMN IF NOT EXISTS position INTEGER NOT NULL DEFAULT 0;
+UPDATE public.comments c SET position = sub.rn FROM (SELECT id, ROW_NUMBER() OVER (PARTITION BY task_id ORDER BY created_at) - 1 AS rn FROM public.comments) sub WHERE c.id = sub.id AND c.position = 0;

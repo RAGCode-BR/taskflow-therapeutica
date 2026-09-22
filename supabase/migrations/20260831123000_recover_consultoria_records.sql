@@ -1,0 +1,7 @@
+-- Intentionally empty.
+--
+-- This migration was originally drafted as a recovery that reassigned every
+-- record to Consultoria. That would violate the workspace boundary once
+-- Marketing has real records, so it must never move data between workspaces.
+-- Existing records are already backfilled to Consultoria by the initial
+-- workspace migration only when workspace_id is NULL.
