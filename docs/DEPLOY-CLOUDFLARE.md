@@ -4,6 +4,10 @@ Este projeto gera uma aplicação SSR para **Cloudflare Workers**, com os assets
 do frontend e da PWA publicados junto ao Worker. O deploy Cloudflare é separado
 do build Vercel já existente.
 
+O repositório usa npm e `package-lock.json` como fonte única das dependências.
+Não adicione outro lockfile, pois o Cloudflare seleciona automaticamente o
+gerenciador de pacotes a partir desse arquivo.
+
 ## Pré-requisitos
 
 - Node.js 22 ou superior.
