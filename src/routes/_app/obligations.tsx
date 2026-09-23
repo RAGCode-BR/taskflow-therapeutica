@@ -25,6 +25,7 @@ import {
   ChevronLeft,
   ChevronRight,
   Clock3,
+  ClipboardList,
   ExternalLink,
   Loader2,
   Pause,
@@ -54,8 +55,10 @@ import {
 import { useWorkspaceTasks } from "@/hooks/use-workspace-tasks";
 import {
   useObligationOccurrences,
+  useObligationDepartments,
   useObligations,
   type Obligation,
+  type ObligationDepartment,
   type ObligationOccurrence,
 } from "@/hooks/use-obligations";
 import { ObligationDialog } from "@/components/ObligationDialog";
@@ -151,6 +154,7 @@ function ObligationsPage() {
   const { data: columns = [] } = useColumns();
   const { data: taskStatuses = [] } = useTaskStatuses();
   const { data: tasks = [] } = useWorkspaceTasks();
+  const { data: departments = [] } = useObligationDepartments();
   const materializedWorkspace = useRef<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingObligation, setEditingObligation] = useState<Obligation | null>(null);
@@ -158,6 +162,7 @@ function ObligationsPage() {
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [search, setSearch] = useState("");
   const [clientFilter, setClientFilter] = useState("all");
+  const [departmentFilter, setDepartmentFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [calendarCursor, setCalendarCursor] = useState(new Date());
   const [workingOccurrenceId, setWorkingOccurrenceId] = useState<string | null>(null);
@@ -166,12 +171,24 @@ function ObligationsPage() {
   const [selectedOccurrenceIds, setSelectedOccurrenceIds] = useState<string[]>([]);
   const [bulkEditOccurrenceIds, setBulkEditOccurrenceIds] = useState<string[]>([]);
   const [bulkEditOpen, setBulkEditOpen] = useState(false);
-  const [clientLogoUrls, setClientLogoUrls] = useState<Record<string, string>>({});
+  const [meetingOccurrence, setMeetingOccurrence] = useState<ObligationOccurrence | null>(null);
+  const [meetingDialogOpen, setMeetingDialogOpen] = useState(false);
+  const [taskDefaults, setTaskDefaults] = useState<{
+    title?: string;
+    description?: string;
+    dueDate?: string;
+    dueTime?: string;
+    clientId?: string | null;
+    assigneeId?: string | null;
+    priority?: Task["priority"];
+  }>();
+  const [taskOccurrenceId, setTaskOccurrenceId] = useState<string | null>(null);
 
   useEffect(() => {
     // A materialização é uma rotina do servidor. Offline, a última lista de
     // vencimentos persistida é exibida sem tentar chamar o banco.
-    if (isOffline() || !activeWorkspace?.id || materializedWorkspace.current === activeWorkspace.id) return;
+    if (isOffline() || !activeWorkspace?.id || materializedWorkspace.current === activeWorkspace.id)
+      return;
     materializedWorkspace.current = activeWorkspace.id;
     void (async () => {
       const { error } = await (supabase as any).rpc("materialize_obligations", {
@@ -190,72 +207,6 @@ function ObligationsPage() {
     })();
   }, [activeWorkspace?.id, queryClient]);
 
-  useEffect(() => {
-    let cancelled = false;
-    const clientsWithLogo = clients.filter((client) => client.avatar_path);
-    if (clientsWithLogo.length === 0) {
-      setClientLogoUrls({});
-      return;
-    }
-
-    void (async () => {
-      const paths = Object.fromEntries(
-        clientsWithLogo.map((client) => [client.id, client.avatar_path!]),
-      );
-      let cached: Record<string, { url: string; expiresAt: number; path?: string }> = {};
-      try {
-        cached = JSON.parse(window.sessionStorage.getItem("taskflow-client-avatar-urls") ?? "{}");
-      } catch {
-        cached = {};
-      }
-
-      const now = Date.now();
-      const visibleCached = Object.fromEntries(
-        clientsWithLogo
-          .filter((client) => {
-            const entry = cached[client.id];
-            return entry?.url && entry.expiresAt > now && entry.path === client.avatar_path;
-          })
-          .map((client) => [client.id, cached[client.id].url]),
-      );
-      const missing = clientsWithLogo.filter((client) => !visibleCached[client.id]);
-      if (!cancelled) setClientLogoUrls(visibleCached);
-      if (missing.length === 0) return;
-
-      const { data } = await supabase.storage.from("task-attachments").createSignedUrls(
-        missing.map((client) => client.avatar_path!),
-        3600,
-      );
-      const urlByPath = new Map(
-        (data ?? []).map((item: { path: string | null; signedUrl: string | null }) => [
-          item.path,
-          item.signedUrl,
-        ]),
-      );
-      const loaded = Object.fromEntries(
-        missing
-          .map((client) => [client.id, urlByPath.get(client.avatar_path!)])
-          .filter((entry): entry is [string, string] => Boolean(entry[1])),
-      );
-      if (cancelled) return;
-
-      const expiresAt = Date.now() + 50 * 60 * 1000;
-      Object.entries(loaded).forEach(([clientId, url]) => {
-        cached[clientId] = { url, expiresAt, path: paths[clientId] };
-      });
-      try {
-        window.sessionStorage.setItem("taskflow-client-avatar-urls", JSON.stringify(cached));
-      } catch {
-        // A lista continua funcional quando o armazenamento do navegador está bloqueado.
-      }
-      setClientLogoUrls({ ...visibleCached, ...loaded });
-    })();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [clients]);
-
   const obligationById = useMemo(
     () => new Map(obligations.map((obligation) => [obligation.id, obligation])),
     [obligations],
@@ -268,7 +219,29 @@ function ObligationsPage() {
     () => new Map(profiles.map((profile) => [profile.id, profile])),
     [profiles],
   );
+  const departmentById = useMemo(
+    () => new Map(departments.map((department) => [department.id, department])),
+    [departments],
+  );
   const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+  const agendaTasksByOccurrence = useMemo(() => {
+    const grouped = new Map<string, Task[]>();
+    tasks.forEach((task) => {
+      if (!task.obligation_occurrence_id) return;
+      const current = grouped.get(task.obligation_occurrence_id) ?? [];
+      current.push(task);
+      grouped.set(task.obligation_occurrence_id, current);
+    });
+    occurrences.forEach((occurrence) => {
+      if (!occurrence.task_id) return;
+      const legacyTask = taskById.get(occurrence.task_id);
+      if (!legacyTask) return;
+      const current = grouped.get(occurrence.id) ?? [];
+      if (!current.some((task) => task.id === legacyTask.id)) current.push(legacyTask);
+      grouped.set(occurrence.id, current);
+    });
+    return grouped;
+  }, [occurrences, taskById, tasks]);
 
   const activeOccurrences = useMemo(
     () =>
@@ -276,16 +249,28 @@ function ObligationsPage() {
         if (occurrence.status === "skipped") return false;
         const obligation = obligationById.get(occurrence.obligation_id);
         if (!obligation) return false;
+        if (departmentFilter !== "all" && obligation.department_id !== departmentFilter)
+          return false;
         if (clientFilter !== "all" && obligation.client_id !== clientFilter) return false;
         if (assigneeFilter !== "all" && obligation.assignee_id !== assigneeFilter) return false;
         const term = search.trim().toLocaleLowerCase("pt-BR");
         if (!term) return true;
         const client = clientById.get(obligation.client_id ?? "");
-        return `${obligation.title} ${client?.name ?? ""}`
+        const department = departmentById.get(obligation.department_id ?? "");
+        return `${obligation.title} ${client?.name ?? ""} ${department?.name ?? ""}`
           .toLocaleLowerCase("pt-BR")
           .includes(term);
       }),
-    [assigneeFilter, clientById, clientFilter, obligationById, occurrences, search],
+    [
+      assigneeFilter,
+      clientById,
+      clientFilter,
+      departmentById,
+      departmentFilter,
+      obligationById,
+      occurrences,
+      search,
+    ],
   );
 
   const today = todayKey();
@@ -301,39 +286,45 @@ function ObligationsPage() {
     pendingOccurrences.forEach((occurrence) => {
       const obligation = obligationById.get(occurrence.obligation_id);
       if (!obligation) return;
-      const key = obligation.client_id ?? "without-client";
+      const key = obligation.department_id ?? "without-department";
       const group = groups.get(key) ?? [];
       group.push({ occurrence, obligation });
       groups.set(key, group);
     });
     return [...groups.entries()]
-      .map(([clientId, items]) => ({
-        clientId,
-        client: clientById.get(clientId) ?? null,
+      .map(([departmentId, items]) => ({
+        departmentId,
+        department: departmentById.get(departmentId) ?? null,
         items,
       }))
       .sort((a, b) =>
-        (a.client?.name ?? "Sem cliente").localeCompare(b.client?.name ?? "Sem cliente", "pt-BR"),
+        (a.department?.name ?? "Sem departamento").localeCompare(
+          b.department?.name ?? "Sem departamento",
+          "pt-BR",
+        ),
       );
-  }, [clientById, obligationById, pendingOccurrences]);
+  }, [departmentById, obligationById, pendingOccurrences]);
   const obligationGroups = useMemo(() => {
     const groups = new Map<string, Obligation[]>();
     obligations.forEach((obligation) => {
-      const key = obligation.client_id ?? "without-client";
+      const key = obligation.department_id ?? "without-department";
       const group = groups.get(key) ?? [];
       group.push(obligation);
       groups.set(key, group);
     });
     return [...groups.entries()]
-      .map(([clientId, items]) => ({
-        clientId,
-        client: clientById.get(clientId) ?? null,
+      .map(([departmentId, items]) => ({
+        departmentId,
+        department: departmentById.get(departmentId) ?? null,
         items,
       }))
       .sort((a, b) =>
-        (a.client?.name ?? "Sem cliente").localeCompare(b.client?.name ?? "Sem cliente", "pt-BR"),
+        (a.department?.name ?? "Sem departamento").localeCompare(
+          b.department?.name ?? "Sem departamento",
+          "pt-BR",
+        ),
       );
-  }, [clientById, obligations]);
+  }, [departmentById, obligations]);
   const overdueCount = pendingOccurrences.filter(
     (occurrence) => occurrence.due_date < today,
   ).length;
@@ -350,35 +341,31 @@ function ObligationsPage() {
       isSameMonth(new Date(occurrence.completed_at), new Date()),
   ).length;
 
-  const openTask = (occurrence: ObligationOccurrence) => {
-    const task = occurrence.task_id ? taskById.get(occurrence.task_id) : null;
-    if (!task) return toast.error("A tarefa desta ocorrência ainda não foi criada.");
-    setEditingTask(task);
+  const openMeeting = (occurrence: ObligationOccurrence) => {
+    setMeetingOccurrence(occurrence);
+    setMeetingDialogOpen(true);
+  };
+
+  const createAgendaTask = (occurrence: ObligationOccurrence) => {
+    const obligation = obligationById.get(occurrence.obligation_id);
+    if (!obligation) return;
+    setEditingTask(null);
+    setTaskOccurrenceId(occurrence.id);
+    setTaskDefaults({
+      dueDate: occurrence.due_date,
+      dueTime: occurrence.due_time?.slice(0, 5) ?? "",
+      clientId: obligation.client_id,
+      assigneeId: obligation.assignee_id,
+      priority: obligation.priority,
+    });
     setTaskDialogOpen(true);
   };
 
-  const createTaskNow = async (occurrence: ObligationOccurrence) => {
-    const restoringDeletedTask = Boolean(occurrence.task_id && !taskById.has(occurrence.task_id));
-    setWorkingOccurrenceId(occurrence.id);
-    const { data, error } = await (supabase as any).rpc("create_obligation_task", {
-      target_occurrence_id: occurrence.id,
-    });
-    setWorkingOccurrenceId(null);
-    if (error) return toast.error(error.message);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
-      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
-    ]);
-    toast.success(restoringDeletedTask ? "Tarefa restaurada" : "Tarefa criada");
-    const { data: refreshedTask } = await supabase
-      .from("tasks")
-      .select("*")
-      .eq("id", data as string)
-      .maybeSingle();
-    if (refreshedTask) {
-      setEditingTask(refreshedTask as Task);
-      setTaskDialogOpen(true);
-    }
+  const openAgendaTask = (task: Task, occurrence: ObligationOccurrence) => {
+    setEditingTask(task);
+    setTaskDefaults(undefined);
+    setTaskOccurrenceId(task.obligation_occurrence_id ?? occurrence.id);
+    setTaskDialogOpen(true);
   };
 
   const completeOccurrence = async (occurrence: ObligationOccurrence) => {
@@ -392,7 +379,8 @@ function ObligationsPage() {
       queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
       queryClient.invalidateQueries({ queryKey: ["tasks"] }),
     ]);
-    toast.success("Obrigação concluída neste período");
+    setMeetingDialogOpen(false);
+    toast.success("Reunião encerrada");
   };
 
   const toggleOccurrenceSelection = (occurrenceId: string) => {
@@ -419,12 +407,15 @@ function ObligationsPage() {
     const selectedOccurrences = bulkEditOccurrenceIds
       .map((id) => occurrences.find((occurrence) => occurrence.id === id))
       .filter((occurrence): occurrence is ObligationOccurrence => Boolean(occurrence));
-    const existingTaskIds = selectedOccurrences
-      .map((occurrence) => occurrence.task_id)
-      .filter((taskId): taskId is string => Boolean(taskId && taskById.has(taskId)));
-    const occurrencesToMaterialize = selectedOccurrences.filter(
-      (occurrence) => !occurrence.task_id || !taskById.has(occurrence.task_id),
+    const existingTaskIds = selectedOccurrences.flatMap((occurrence) =>
+      (agendaTasksByOccurrence.get(occurrence.id) ?? []).map((task) => task.id),
     );
+    const occurrencesToMaterialize = selectedOccurrences.filter((occurrence) => {
+      const obligation = obligationById.get(occurrence.obligation_id);
+      return (
+        !obligation?.meeting_mode && (!occurrence.task_id || !taskById.has(occurrence.task_id))
+      );
+    });
 
     const creationResults = await Promise.all(
       occurrencesToMaterialize.map((occurrence) =>
@@ -579,8 +570,18 @@ function ObligationsPage() {
 
   const setObligationActive = async (obligation: Obligation, isActive: boolean) => {
     if (user && activeWorkspace?.id && isOffline()) {
-      await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "update", entityId: obligation.id, payload: { table: "obligations", patch: { is_active: isActive } } });
-      queryClient.setQueryData<Obligation[]>(["obligations", activeWorkspace.id], (current = []) => current.map((item) => item.id === obligation.id ? { ...item, is_active: isActive } : item));
+      await enqueueOfflineOperation({
+        userId: user.id,
+        entity: "record",
+        action: "update",
+        entityId: obligation.id,
+        payload: { table: "obligations", patch: { is_active: isActive } },
+      });
+      queryClient.setQueryData<Obligation[]>(["obligations", activeWorkspace.id], (current = []) =>
+        current.map((item) =>
+          item.id === obligation.id ? { ...item, is_active: isActive } : item,
+        ),
+      );
       toast.success("AlteraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
       return;
     }
@@ -611,12 +612,48 @@ function ObligationsPage() {
     if (user && activeWorkspace?.id && isOffline()) {
       const target = deleteTarget;
       if (target.scope === "occurrences") {
-        await Promise.all(target.occurrences.map((occurrence) => enqueueOfflineOperation({ userId: user.id, entity: "record", action: "update", entityId: occurrence.id, payload: { table: "obligation_occurrences", patch: { status: "skipped" } } })));
-        queryClient.setQueryData<any[]>(["obligation-occurrences", activeWorkspace.id], (current = []) => current.map((item) => target.occurrences.some((occurrence) => occurrence.id === item.id) ? { ...item, status: "skipped" } : item));
+        await Promise.all(
+          target.occurrences.map((occurrence) =>
+            enqueueOfflineOperation({
+              userId: user.id,
+              entity: "record",
+              action: "update",
+              entityId: occurrence.id,
+              payload: { table: "obligation_occurrences", patch: { status: "skipped" } },
+            }),
+          ),
+        );
+        queryClient.setQueryData<any[]>(
+          ["obligation-occurrences", activeWorkspace.id],
+          (current = []) =>
+            current.map((item) =>
+              target.occurrences.some((occurrence) => occurrence.id === item.id)
+                ? { ...item, status: "skipped" }
+                : item,
+            ),
+        );
       } else {
-        const ids = target.scope === "series" ? [target.obligation.id] : target.scope === "series-batch" ? target.obligations.map((item) => item.id) : obligations.map((item) => item.id);
-        await Promise.all(ids.map((id) => enqueueOfflineOperation({ userId: user.id, entity: "record", action: "delete", entityId: id, payload: { table: "obligations" } })));
-        queryClient.setQueryData<Obligation[]>(["obligations", activeWorkspace.id], (current = []) => current.filter((item) => !ids.includes(item.id)));
+        const ids =
+          target.scope === "series"
+            ? [target.obligation.id]
+            : target.scope === "series-batch"
+              ? target.obligations.map((item) => item.id)
+              : obligations.map((item) => item.id);
+        await Promise.all(
+          ids.map((id) =>
+            enqueueOfflineOperation({
+              userId: user.id,
+              entity: "record",
+              action: "delete",
+              entityId: id,
+              payload: { table: "obligations" },
+            }),
+          ),
+        );
+        queryClient.setQueryData<Obligation[]>(
+          ["obligations", activeWorkspace.id],
+          (current = []) => current.filter((item) => !ids.includes(item.id)),
+        );
       }
       setDeleting(false);
       setDeleteTarget(null);
@@ -707,7 +744,7 @@ function ObligationsPage() {
             <h1 className="text-2xl font-semibold tracking-tight">Obrigações</h1>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Controle compromissos recorrentes dos clientes e gere tarefas no momento certo.
+            Organize reuniões recorrentes por departamento, suas pautas e checklists.
           </p>
         </div>
         <Button
@@ -717,7 +754,7 @@ function ObligationsPage() {
             setDialogOpen(true);
           }}
         >
-          <Plus className="mr-2 h-4 w-4" /> Nova obrigação
+          <Plus className="mr-2 h-4 w-4" /> Nova reunião recorrente
         </Button>
       </header>
 
@@ -755,10 +792,23 @@ function ObligationsPage() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar obrigação ou cliente..."
+            placeholder="Buscar reunião, departamento ou cliente..."
             className="pl-9"
           />
         </div>
+        <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+          <SelectTrigger className="w-52">
+            <SelectValue placeholder="Todos os departamentos" />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="all">Todos os departamentos</SelectItem>
+            {departments.map((department) => (
+              <SelectItem key={department.id} value={department.id}>
+                {department.name}
+              </SelectItem>
+            ))}
+          </SelectContent>
+        </Select>
         <Select value={clientFilter} onValueChange={setClientFilter}>
           <SelectTrigger className="w-52">
             <SelectValue placeholder="Todos os clientes" />
@@ -802,17 +852,22 @@ function ObligationsPage() {
             </div>
           ) : pendingOccurrences.length === 0 ? (
             <EmptyState
-              title="Nenhum vencimento pendente"
-              description="Crie uma obrigação para começar a acompanhar os próximos prazos."
+              title="Nenhuma reunião pendente"
+              description="Crie uma rotina para começar a acompanhar as próximas reuniões."
             />
           ) : (
             <div className="space-y-3">
-              {pendingGroups.map(({ clientId, client, items }, index) => {
+              {pendingGroups.map(({ departmentId, department, items }, index) => {
                 const occurrenceIds = items.map((item) => item.occurrence.id);
                 const selectedItems = items.filter((item) =>
                   selectedOccurrenceIds.includes(item.occurrence.id),
                 );
                 const selectedIds = selectedItems.map((item) => item.occurrence.id);
+                const selectedAgendaCount = selectedIds.reduce(
+                  (count, occurrenceId) =>
+                    count + (agendaTasksByOccurrence.get(occurrenceId)?.length ?? 0),
+                  0,
+                );
                 const selectedObligations = [
                   ...new Map(
                     selectedItems.map((item) => [item.obligation.id, item.obligation]),
@@ -821,11 +876,10 @@ function ObligationsPage() {
                 const allSelected =
                   occurrenceIds.length > 0 && selectedIds.length === occurrenceIds.length;
                 return (
-                  <ClientSection
-                    key={clientId}
-                    client={client}
-                    logoUrl={client ? clientLogoUrls[client.id] : undefined}
-                    subtitle={`${new Set(items.map((item) => item.obligation.id)).size} obrigação(ões) · ${items.length} vencimento(s)`}
+                  <DepartmentSection
+                    key={departmentId}
+                    department={department}
+                    subtitle={`${new Set(items.map((item) => item.obligation.id)).size} rotina(s) · ${items.length} reunião(ões)`}
                     defaultOpen={index === 0}
                     actions={
                       <div className="flex shrink-0 items-center gap-2">
@@ -844,15 +898,15 @@ function ObligationsPage() {
                           type="button"
                           variant="outline"
                           size="sm"
-                          disabled={selectedIds.length === 0}
+                          disabled={selectedAgendaCount === 0}
                           onClick={() => {
                             setBulkEditOccurrenceIds(selectedIds);
                             setBulkEditOpen(true);
                           }}
                         >
                           <Pencil className="mr-1.5 h-3.5 w-3.5" />
-                          Editar selecionadas
-                          {selectedIds.length > 0 ? ` (${selectedIds.length})` : ""}
+                          Editar pautas
+                          {selectedAgendaCount > 0 ? ` (${selectedAgendaCount})` : ""}
                         </Button>
                         <DropdownMenu>
                           <DropdownMenuTrigger asChild>
@@ -878,7 +932,7 @@ function ObligationsPage() {
                               }
                             >
                               <Trash2 className="mr-2 h-4 w-4" />
-                              Excluir somente os vencimentos selecionados
+                              Excluir somente as reuniões selecionadas
                             </DropdownMenuItem>
                             <DropdownMenuItem
                               className="text-destructive"
@@ -898,16 +952,16 @@ function ObligationsPage() {
                     }
                   >
                     {items.map(({ occurrence, obligation }) => {
-                      const task = occurrence.task_id
-                        ? (taskById.get(occurrence.task_id) ?? null)
-                        : null;
+                      const agendaTasks = agendaTasksByOccurrence.get(occurrence.id) ?? [];
+                      const task = agendaTasks[0] ?? null;
                       return (
                         <OccurrenceRow
                           key={occurrence.id}
                           occurrence={occurrence}
                           obligation={obligation}
-                          task={task}
-                          client={client}
+                          client={clientById.get(obligation.client_id ?? "") ?? null}
+                          department={department}
+                          agendaTasks={agendaTasks}
                           assignee={
                             profileById.get(task?.assignee_id ?? obligation.assignee_id ?? "") ??
                             null
@@ -915,13 +969,12 @@ function ObligationsPage() {
                           selected={selectedOccurrenceIds.includes(occurrence.id)}
                           working={workingOccurrenceId === occurrence.id}
                           onSelectedChange={() => toggleOccurrenceSelection(occurrence.id)}
-                          onOpenTask={() => openTask(occurrence)}
-                          onCreateTask={() => void createTaskNow(occurrence)}
+                          onOpenMeeting={() => openMeeting(occurrence)}
                           onComplete={() => void completeOccurrence(occurrence)}
                         />
                       );
                     })}
-                  </ClientSection>
+                  </DepartmentSection>
                 );
               })}
             </div>
@@ -935,9 +988,9 @@ function ObligationsPage() {
             occurrences={activeOccurrences}
             obligationById={obligationById}
             clientById={clientById}
+            departmentById={departmentById}
             onOccurrenceClick={(occurrence) => {
-              if (occurrence.task_id && taskById.has(occurrence.task_id)) openTask(occurrence);
-              else void createTaskNow(occurrence);
+              openMeeting(occurrence);
             }}
           />
         </TabsContent>
@@ -945,14 +998,14 @@ function ObligationsPage() {
         <TabsContent value="settings" className="mt-4">
           {obligations.length === 0 ? (
             <EmptyState
-              title="Nenhuma obrigação configurada"
-              description="Cadastre a primeira regra recorrente de um cliente."
+              title="Nenhuma reunião recorrente configurada"
+              description="Cadastre a primeira rotina de reunião de um departamento."
             />
           ) : (
             <div className="space-y-3">
               <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3">
                 <p className="text-sm text-muted-foreground">
-                  {obligations.length} obrigação(ões) configurada(s) neste ambiente
+                  {obligations.length} reunião(ões) recorrente(s) neste ambiente
                 </p>
                 <Button
                   variant="outline"
@@ -965,16 +1018,16 @@ function ObligationsPage() {
                 </Button>
               </div>
               <div className="space-y-3">
-                {obligationGroups.map(({ clientId, client, items }, index) => (
-                  <ClientSection
-                    key={clientId}
-                    client={client}
-                    logoUrl={client ? clientLogoUrls[client.id] : undefined}
-                    subtitle={`${items.length} obrigação(ões) configurada(s)`}
+                {obligationGroups.map(({ departmentId, department, items }, index) => (
+                  <DepartmentSection
+                    key={departmentId}
+                    department={department}
+                    subtitle={`${items.length} reunião(ões) recorrente(s)`}
                     defaultOpen={index === 0}
                   >
                     <div className="grid gap-3 lg:grid-cols-2">
                       {items.map((obligation) => {
+                        const client = clientById.get(obligation.client_id ?? "") ?? null;
                         const assignee = profileById.get(obligation.assignee_id ?? "");
                         const nextOccurrence = occurrences.find(
                           (occurrence) =>
@@ -990,7 +1043,10 @@ function ObligationsPage() {
                                 <div className="flex items-center gap-2">
                                   <span
                                     className="h-3 w-3 shrink-0 rounded-sm"
-                                    style={{ backgroundColor: client?.color || "#64748b" }}
+                                    style={{
+                                      backgroundColor:
+                                        department?.color || client?.color || "#64748b",
+                                    }}
                                   />
                                   <h3 className="truncate font-semibold">{obligation.title}</h3>
                                   {!obligation.is_active && (
@@ -998,7 +1054,8 @@ function ObligationsPage() {
                                   )}
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">
-                                  {client?.name || "Sem cliente"} · {formatRecurrence(obligation)}
+                                  {client?.name || "Reunião interna"} ·{" "}
+                                  {formatRecurrence(obligation)}
                                 </p>
                               </div>
                               <div className="flex shrink-0 gap-1">
@@ -1058,13 +1115,9 @@ function ObligationsPage() {
                                 </span>
                               </div>
                               <div>
-                                <span className="block text-muted-foreground">
-                                  Criação da tarefa
-                                </span>
+                                <span className="block text-muted-foreground">Pautas</span>
                                 <span className="mt-1 block font-medium">
-                                  {obligation.create_before_days === 0
-                                    ? "No vencimento"
-                                    : `${obligation.create_before_days} dia(s) antes`}
+                                  Criadas dentro de cada reunião
                                 </span>
                               </div>
                               <div>
@@ -1081,7 +1134,7 @@ function ObligationsPage() {
                         );
                       })}
                     </div>
-                  </ClientSection>
+                  </DepartmentSection>
                 ))}
               </div>
             </div>
@@ -1094,11 +1147,46 @@ function ObligationsPage() {
         onOpenChange={setDialogOpen}
         obligation={editingObligation}
       />
-      <TaskDialog open={taskDialogOpen} onOpenChange={setTaskDialogOpen} task={editingTask} />
+      <MeetingOverviewDialog
+        open={meetingDialogOpen}
+        onOpenChange={setMeetingDialogOpen}
+        occurrence={meetingOccurrence}
+        obligation={
+          meetingOccurrence ? (obligationById.get(meetingOccurrence.obligation_id) ?? null) : null
+        }
+        department={
+          meetingOccurrence
+            ? (departmentById.get(
+                obligationById.get(meetingOccurrence.obligation_id)?.department_id ?? "",
+              ) ?? null)
+            : null
+        }
+        client={
+          meetingOccurrence
+            ? (clientById.get(
+                obligationById.get(meetingOccurrence.obligation_id)?.client_id ?? "",
+              ) ?? null)
+            : null
+        }
+        tasks={meetingOccurrence ? (agendaTasksByOccurrence.get(meetingOccurrence.id) ?? []) : []}
+        onCreateAgenda={() => meetingOccurrence && createAgendaTask(meetingOccurrence)}
+        onOpenTask={(task) => meetingOccurrence && openAgendaTask(task, meetingOccurrence)}
+        onComplete={() => meetingOccurrence && void completeOccurrence(meetingOccurrence)}
+      />
+      <TaskDialog
+        open={taskDialogOpen}
+        onOpenChange={setTaskDialogOpen}
+        task={editingTask}
+        obligationOccurrenceId={taskOccurrenceId}
+        defaults={taskDefaults}
+      />
       <BulkTaskEditDialog
         open={bulkEditOpen}
         onOpenChange={setBulkEditOpen}
-        taskCount={bulkEditOccurrenceIds.length}
+        taskCount={bulkEditOccurrenceIds.reduce(
+          (count, occurrenceId) => count + (agendaTasksByOccurrence.get(occurrenceId)?.length ?? 0),
+          0,
+        )}
         profiles={assignableProfiles}
         clients={clients}
         columns={columns}
@@ -1163,6 +1251,144 @@ function MetricCard({
         <span className="mt-1 block text-xs text-muted-foreground">{label}</span>
       </span>
     </Card>
+  );
+}
+
+function MeetingOverviewDialog({
+  open,
+  onOpenChange,
+  occurrence,
+  obligation,
+  department,
+  client,
+  tasks,
+  onCreateAgenda,
+  onOpenTask,
+  onComplete,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  occurrence: ObligationOccurrence | null;
+  obligation: Obligation | null;
+  department: ObligationDepartment | null;
+  client: Client | null;
+  tasks: Task[];
+  onCreateAgenda: () => void;
+  onOpenTask: (task: Task) => void;
+  onComplete: () => void;
+}) {
+  if (!occurrence || !obligation) return null;
+  const completed = tasks.filter(
+    (task) => task.status === "done" || Boolean(task.completed_at),
+  ).length;
+  const pending = tasks.length - completed;
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>{obligation.title}</DialogTitle>
+          <DialogDescription>
+            {department?.name ?? "Sem departamento"} · {formatDate(occurrence.due_date)}
+            {occurrence.due_time ? ` às ${occurrence.due_time.slice(0, 5)}` : ""}
+            {client ? ` · ${client.name}` : " · Reunião interna"}
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="grid gap-3 sm:grid-cols-3">
+          <Card className="p-3">
+            <p className="text-xs text-muted-foreground">Pautas</p>
+            <p className="mt-1 text-2xl font-semibold">{tasks.length}</p>
+          </Card>
+          <Card className="p-3">
+            <p className="text-xs text-muted-foreground">Pendentes</p>
+            <p className="mt-1 text-2xl font-semibold text-amber-600">{pending}</p>
+          </Card>
+          <Card className="p-3">
+            <p className="text-xs text-muted-foreground">Concluídas</p>
+            <p className="mt-1 text-2xl font-semibold text-emerald-600">{completed}</p>
+          </Card>
+        </div>
+
+        {obligation.description ? (
+          <div className="rounded-xl border bg-muted/20 p-3 text-sm text-muted-foreground">
+            {obligation.description}
+          </div>
+        ) : null}
+
+        <section className="space-y-3">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="font-semibold">Pautas da reunião</h3>
+              <p className="text-xs text-muted-foreground">
+                Cada pauta é uma tarefa completa e pode possuir checklist ou subtarefas.
+              </p>
+            </div>
+            <Button size="sm" onClick={onCreateAgenda}>
+              <Plus className="mr-1.5 h-4 w-4" /> Nova pauta
+            </Button>
+          </div>
+
+          {tasks.length === 0 ? (
+            <Card className="grid place-items-center px-4 py-10 text-center">
+              <ClipboardList className="h-8 w-8 text-muted-foreground" />
+              <p className="mt-3 font-medium">Nenhuma pauta criada</p>
+              <p className="mt-1 text-sm text-muted-foreground">
+                Adicione os assuntos que deverão ser tratados nesta reunião.
+              </p>
+            </Card>
+          ) : (
+            <div className="space-y-2">
+              {tasks.map((task) => {
+                const isCompleted = task.status === "done" || Boolean(task.completed_at);
+                return (
+                  <button
+                    key={task.id}
+                    type="button"
+                    onClick={() => onOpenTask(task)}
+                    className="flex w-full items-center gap-3 rounded-xl border bg-card p-3 text-left transition hover:bg-muted/40"
+                  >
+                    <span
+                      className={`grid h-9 w-9 shrink-0 place-items-center rounded-full ${
+                        isCompleted
+                          ? "bg-emerald-500/10 text-emerald-600"
+                          : "bg-amber-500/10 text-amber-600"
+                      }`}
+                    >
+                      {isCompleted ? (
+                        <CheckCircle2 className="h-4 w-4" />
+                      ) : (
+                        <Clock3 className="h-4 w-4" />
+                      )}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate font-medium">{task.title}</span>
+                      <span className="mt-0.5 block text-xs text-muted-foreground">
+                        {isCompleted ? "Concluída" : "Pendente"}
+                        {task.due_date
+                          ? ` · prazo ${format(new Date(task.due_date), "dd/MM/yyyy")}`
+                          : ""}
+                      </span>
+                    </span>
+                    <ExternalLink className="h-4 w-4 shrink-0 text-muted-foreground" />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </section>
+
+        <DialogFooter className="gap-2">
+          <Button variant="outline" onClick={() => onOpenChange(false)}>
+            Fechar
+          </Button>
+          <Button disabled={pending > 0} onClick={onComplete}>
+            <CheckCircle2 className="mr-1.5 h-4 w-4" />
+            {pending > 0 ? `${pending} pauta(s) pendente(s)` : "Encerrar reunião"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
@@ -1502,24 +1728,22 @@ function BulkTaskEditDialog({
   );
 }
 
-function ClientSection({
-  client,
-  logoUrl,
+function DepartmentSection({
+  department,
   subtitle,
   defaultOpen,
   actions,
   children,
 }: {
-  client: Client | null;
-  logoUrl?: string;
+  department: ObligationDepartment | null;
   subtitle: string;
   defaultOpen: boolean;
   actions?: ReactNode;
   children: ReactNode;
 }) {
   const [open, setOpen] = useState(defaultOpen);
-  const clientName = client?.name ?? "Sem cliente";
-  const initials = clientName
+  const departmentName = department?.name ?? "Sem departamento";
+  const initials = departmentName
     .split(/\s+/)
     .slice(0, 2)
     .map((part) => part[0])
@@ -1533,20 +1757,15 @@ function ClientSection({
           <CollapsibleTrigger asChild>
             <button type="button" className="flex min-w-0 flex-1 items-center gap-3 text-left">
               <Avatar className="h-11 w-11 shrink-0 rounded-xl border bg-background">
-                <AvatarImage
-                  src={logoUrl}
-                  alt={`Logo ${clientName}`}
-                  className="object-contain p-1"
-                />
                 <AvatarFallback
                   className="rounded-xl text-xs font-semibold text-white"
-                  style={{ backgroundColor: client?.color || "#64748b" }}
+                  style={{ backgroundColor: department?.color || "#64748b" }}
                 >
                   {initials || "?"}
                 </AvatarFallback>
               </Avatar>
               <div className="min-w-0 flex-1">
-                <h2 className="truncate font-semibold">{clientName}</h2>
+                <h2 className="truncate font-semibold">{departmentName}</h2>
                 <p className="text-xs text-muted-foreground">{subtitle}</p>
               </div>
               {!actions && (
@@ -1578,33 +1797,36 @@ function ClientSection({
 function OccurrenceRow({
   occurrence,
   obligation,
-  task,
   client,
+  department,
+  agendaTasks,
   assignee,
   selected,
   working,
   onSelectedChange,
-  onOpenTask,
-  onCreateTask,
+  onOpenMeeting,
   onComplete,
 }: {
   occurrence: ObligationOccurrence;
   obligation: Obligation;
-  task: Task | null;
   client: Client | null;
+  department: ObligationDepartment | null;
+  agendaTasks: Task[];
   assignee: Profile | null;
   selected: boolean;
   working: boolean;
   onSelectedChange: () => void;
-  onOpenTask: () => void;
-  onCreateTask: () => void;
+  onOpenMeeting: () => void;
   onComplete: () => void;
 }) {
   const today = todayKey();
   const overdue = occurrence.due_date < today;
   const dueToday = occurrence.due_date === today;
-  const taskAvailable = Boolean(task);
-  const displayTitle = task?.title ?? obligation.title;
+  const displayTitle = obligation.title;
+  const completedAgendaCount = agendaTasks.filter(
+    (agenda) => agenda.status === "done" || Boolean(agenda.completed_at),
+  ).length;
+  const hasPendingAgendas = completedAgendaCount < agendaTasks.length;
   const assigneeName = assignee?.full_name || assignee?.email || "Sem responsável";
   const initials = assignee
     ? assigneeName
@@ -1625,7 +1847,7 @@ function OccurrenceRow({
       />
       <div
         className="grid h-12 w-14 shrink-0 place-items-center rounded-xl text-center text-white"
-        style={{ backgroundColor: client?.color || "#64748b" }}
+        style={{ backgroundColor: department?.color || client?.color || "#64748b" }}
       >
         <span>
           <span className="block text-lg font-bold leading-none">
@@ -1647,36 +1869,33 @@ function OccurrenceRow({
             <Badge variant="destructive">Atrasada</Badge>
           ) : dueToday ? (
             <Badge className="bg-amber-500 text-white">Hoje</Badge>
-          ) : taskAvailable ? (
-            <Badge variant="secondary">Tarefa criada</Badge>
+          ) : agendaTasks.length > 0 ? (
+            <Badge variant="secondary">
+              {completedAgendaCount}/{agendaTasks.length} pauta(s)
+            </Badge>
           ) : (
-            <Badge variant="outline">Prevista</Badge>
+            <Badge variant="outline">Sem pautas</Badge>
           )}
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {client?.name || "Sem cliente"} · {assigneeName} · {formatRecurrence(obligation)}
+          {department?.name || "Sem departamento"} · {client?.name || "Interna"} · {assigneeName} ·{" "}
+          {formatRecurrence(obligation)}
           {occurrence.due_time ? ` · ${occurrence.due_time.slice(0, 5)}` : ""}
         </p>
       </div>
       <div className="flex shrink-0 gap-2">
-        {taskAvailable ? (
-          <Button variant="outline" size="sm" onClick={onOpenTask}>
-            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
-            Abrir tarefa
-          </Button>
-        ) : (
-          <Button variant="outline" size="sm" disabled={working} onClick={onCreateTask}>
-            {working ? (
-              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <Plus className="mr-1.5 h-3.5 w-3.5" />
-            )}
-            Criar tarefa
-          </Button>
-        )}
-        <Button size="sm" disabled={working} onClick={onComplete}>
+        <Button variant="outline" size="sm" onClick={onOpenMeeting}>
+          <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+          Abrir reunião
+        </Button>
+        <Button
+          size="sm"
+          disabled={working || hasPendingAgendas}
+          onClick={onComplete}
+          title={hasPendingAgendas ? "Conclua as pautas pendentes antes de encerrar" : undefined}
+        >
           <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
-          Concluir
+          Encerrar
         </Button>
       </div>
     </Card>
@@ -1689,6 +1908,7 @@ function ObligationsCalendar({
   occurrences,
   obligationById,
   clientById,
+  departmentById,
   onOccurrenceClick,
 }: {
   cursor: Date;
@@ -1696,6 +1916,7 @@ function ObligationsCalendar({
   occurrences: ObligationOccurrence[];
   obligationById: Map<string, Obligation>;
   clientById: Map<string, Client>;
+  departmentById: Map<string, ObligationDepartment>;
   onOccurrenceClick: (occurrence: ObligationOccurrence) => void;
 }) {
   const days = useMemo(
@@ -1761,13 +1982,14 @@ function ObligationsCalendar({
                   const obligation = obligationById.get(occurrence.obligation_id);
                   if (!obligation) return null;
                   const client = clientById.get(obligation.client_id ?? "");
+                  const department = departmentById.get(obligation.department_id ?? "");
                   return (
                     <button
                       key={occurrence.id}
                       type="button"
                       onClick={() => onOccurrenceClick(occurrence)}
                       className="block w-full truncate rounded px-1.5 py-1 text-left text-[10px] font-medium text-white shadow-sm hover:brightness-105"
-                      style={{ backgroundColor: client?.color || "#64748b" }}
+                      style={{ backgroundColor: department?.color || client?.color || "#64748b" }}
                       title={obligation.title}
                     >
                       {obligation.title}

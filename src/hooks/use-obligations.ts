@@ -28,6 +28,21 @@ export interface Obligation {
   priority: "low" | "medium" | "high" | "urgent";
   column_id: string | null;
   status_id: string | null;
+  department_id: string | null;
+  meeting_mode: boolean;
+  is_active: boolean;
+  created_by: string;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ObligationDepartment {
+  id: string;
+  workspace_id: string;
+  name: string;
+  description: string | null;
+  color: string;
+  position: number;
   is_active: boolean;
   created_by: string;
   created_at: string;
@@ -63,6 +78,11 @@ function useObligationRealtime() {
       )
       .on(
         "postgres_changes",
+        { event: "*", schema: "public", table: "obligation_departments" },
+        () => void queryClient.invalidateQueries({ queryKey: ["obligation-departments"] }),
+      )
+      .on(
+        "postgres_changes",
         { event: "*", schema: "public", table: "obligation_occurrences" },
         () => {
           void queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] });
@@ -75,6 +95,23 @@ function useObligationRealtime() {
       void supabase.removeChannel(channel);
     };
   }, [activeWorkspace?.id, queryClient]);
+}
+
+export function useObligationDepartments() {
+  const { user, activeWorkspace } = useAuth();
+  return useQuery({
+    queryKey: ["obligation-departments", activeWorkspace?.id],
+    enabled: !!user && !!activeWorkspace?.id,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("obligation_departments" as any) as any)
+        .select("*")
+        .eq("is_active", true)
+        .order("position")
+        .order("name");
+      if (error) throw error;
+      return (data ?? []) as ObligationDepartment[];
+    },
+  });
 }
 
 export function useObligations() {

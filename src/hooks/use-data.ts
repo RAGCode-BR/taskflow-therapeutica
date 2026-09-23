@@ -44,6 +44,8 @@ export interface Task {
   updated_at: string;
   card_width: number | null;
   conversation_closed_at?: string | null;
+  /** Reunião/ocorrência da qual esta tarefa é uma pauta. */
+  obligation_occurrence_id?: string | null;
   /** Ambiente dono da tarefa. Diverge do ativo quando ela chega por participação. */
   workspace_id?: string | null;
 }

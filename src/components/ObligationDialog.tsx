@@ -5,7 +5,12 @@ import { ChevronDown, Loader2, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAssignableProfiles, useClients, useColumns, useTaskStatuses } from "@/hooks/use-data";
-import type { Obligation, ObligationFrequency, ObligationMonthRule } from "@/hooks/use-obligations";
+import {
+  useObligationDepartments,
+  type Obligation,
+  type ObligationFrequency,
+  type ObligationMonthRule,
+} from "@/hooks/use-obligations";
 import { Button } from "@/components/ui/button";
 import { Checkbox } from "@/components/ui/checkbox";
 import {
@@ -55,10 +60,13 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   const { data: profiles = [] } = useAssignableProfiles();
   const { data: columns = [] } = useColumns();
   const { data: statuses = [] } = useTaskStatuses();
+  const { data: departments = [] } = useObligationDepartments();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [clientIds, setClientIds] = useState<string[]>([]);
   const [clientSearch, setClientSearch] = useState("");
+  const [departmentId, setDepartmentId] = useState("");
+  const [newDepartmentName, setNewDepartmentName] = useState("");
   const [assigneeId, setAssigneeId] = useState("");
   const [frequency, setFrequency] = useState<ObligationFrequency>("monthly");
   const [intervalCount, setIntervalCount] = useState(1);
@@ -82,6 +90,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     setDescription(obligation?.description ?? "");
     setClientIds(obligation?.client_id ? [obligation.client_id] : []);
     setClientSearch("");
+    setDepartmentId(obligation?.department_id ?? "");
+    setNewDepartmentName("");
     setAssigneeId(obligation?.assignee_id ?? "");
     setFrequency(obligation?.frequency ?? "monthly");
     setIntervalCount(obligation?.interval_count ?? 1);
@@ -161,7 +171,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
 
   const save = async () => {
     if (!title.trim()) return toast.error("Informe o nome da obrigação.");
-    if (clientIds.length === 0) return toast.error("Selecione ao menos um cliente.");
+    if (!departmentId && !newDepartmentName.trim())
+      return toast.error("Selecione ou crie um departamento.");
     if (!startDate) return toast.error("Informe a data de início.");
     if (frequency === "weekly" && daysOfWeek.length === 0)
       return toast.error("Selecione ao menos um dia da semana.");
@@ -171,6 +182,37 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       return toast.error("A data final não pode ser anterior ao início.");
 
     setSaving(true);
+    let resolvedDepartmentId = departmentId;
+    if (!resolvedDepartmentId && newDepartmentName.trim()) {
+      if (isOffline()) {
+        setSaving(false);
+        return toast.error("Conecte-se à internet para criar um novo departamento.");
+      }
+      const existingDepartment = departments.find(
+        (department) =>
+          department.name.toLocaleLowerCase("pt-BR") ===
+          newDepartmentName.trim().toLocaleLowerCase("pt-BR"),
+      );
+      if (existingDepartment) {
+        resolvedDepartmentId = existingDepartment.id;
+      } else {
+        const { data: createdDepartment, error: departmentError } = await (
+          supabase.from("obligation_departments" as any) as any
+        )
+          .insert({
+            name: newDepartmentName.trim(),
+            workspace_id: activeWorkspace?.id,
+            created_by: user?.id,
+          })
+          .select("id")
+          .single();
+        if (departmentError || !createdDepartment) {
+          setSaving(false);
+          return toast.error(departmentError?.message ?? "Não foi possível criar o departamento.");
+        }
+        resolvedDepartmentId = createdDepartment.id;
+      }
+    }
     const payload = {
       title: title.trim(),
       description: description.trim() || null,
@@ -189,37 +231,63 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       priority,
       column_id: columnId || null,
       status_id: statusId || null,
+      department_id: resolvedDepartmentId,
+      meeting_mode: true,
       is_active: isActive,
     };
 
     if (user && activeWorkspace && isOffline()) {
       const now = new Date().toISOString();
+      const targetClientIds = clientIds.length > 0 ? clientIds : [null];
       const localItems: Obligation[] = obligation
-        ? [{ ...obligation, ...payload, client_id: clientIds[0], updated_at: now }]
-        : clientIds.map((clientId) => ({
-            id: crypto.randomUUID(), workspace_id: activeWorkspace.id, created_by: user.id,
-            created_at: now, updated_at: now, client_id: clientId, ...payload,
+        ? [{ ...obligation, ...payload, client_id: clientIds[0] ?? null, updated_at: now }]
+        : targetClientIds.map((clientId) => ({
+            id: crypto.randomUUID(),
+            workspace_id: activeWorkspace.id,
+            created_by: user.id,
+            created_at: now,
+            updated_at: now,
+            client_id: clientId,
+            ...payload,
           }));
-      await Promise.all(localItems.map((item) => enqueueOfflineOperation({
-        userId: user.id, entity: "record", action: obligation ? "update" : "create", entityId: item.id,
-        payload: obligation ? { table: "obligations", patch: payload } : { table: "obligations", record: item },
-      })));
+      await Promise.all(
+        localItems.map((item) =>
+          enqueueOfflineOperation({
+            userId: user.id,
+            entity: "record",
+            action: obligation ? "update" : "create",
+            entityId: item.id,
+            payload: obligation
+              ? { table: "obligations", patch: { ...payload, client_id: clientIds[0] ?? null } }
+              : { table: "obligations", record: item },
+          }),
+        ),
+      );
       queryClient.setQueryData<Obligation[]>(["obligations", activeWorkspace.id], (current = []) =>
-        obligation ? current.map((item) => item.id === obligation.id ? localItems[0] : item) : [...current, ...localItems],
+        obligation
+          ? current.map((item) => (item.id === obligation.id ? localItems[0] : item))
+          : [...current, ...localItems],
       );
       setSaving(false);
-      toast.success("ObrigaÃ§Ã£o salva neste aparelho. Os prÃ³ximos prazos serÃ£o gerados ao reconectar.");
+      toast.success(
+        "ObrigaÃ§Ã£o salva neste aparelho. Os prÃ³ximos prazos serÃ£o gerados ao reconectar.",
+      );
       onOpenChange(false);
       return;
     }
 
     const request = obligation
       ? (supabase.from("obligations" as any) as any)
-          .update({ ...payload, client_id: clientIds[0] })
+          .update({ ...payload, client_id: clientIds[0] ?? null })
           .eq("id", obligation.id)
           .select("id")
       : (supabase.from("obligations" as any) as any)
-          .insert(clientIds.map((clientId) => ({ ...payload, client_id: clientId })))
+          .insert(
+            (clientIds.length > 0 ? clientIds : [null]).map((clientId) => ({
+              ...payload,
+              client_id: clientId,
+            })),
+          )
           .select("id");
     const { data, error } = await request;
     if (error) {
@@ -250,7 +318,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     toast.success(
       obligation
         ? "Obrigação atualizada"
-        : clientIds.length === 1
+        : clientIds.length <= 1
           ? "Obrigação criada"
           : `Obrigação criada para ${clientIds.length} clientes`,
     );
@@ -267,18 +335,48 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
         <div className="space-y-5">
           <section className="space-y-4">
             <div className="space-y-2">
-              <Label htmlFor="obligation-title">Nome da obrigação *</Label>
+              <Label htmlFor="obligation-title">Nome da reunião *</Label>
               <Input
                 id="obligation-title"
                 value={title}
                 onChange={(event) => setTitle(event.target.value)}
-                placeholder="Ex.: Entregar relatório mensal"
+                placeholder="Ex.: Reunião semanal do Financeiro"
                 autoFocus
               />
             </div>
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
-                <Label>{obligation ? "Cliente *" : "Clientes *"}</Label>
+                <Label>Departamento *</Label>
+                <Select
+                  value={departmentId || (newDepartmentName ? "new" : "none")}
+                  onValueChange={(value) => {
+                    setDepartmentId(value === "none" || value === "new" ? "" : value);
+                    if (value !== "new") setNewDepartmentName("");
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder="Selecione o departamento" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="none">Selecione o departamento</SelectItem>
+                    {departments.map((department) => (
+                      <SelectItem key={department.id} value={department.id}>
+                        {department.name}
+                      </SelectItem>
+                    ))}
+                    <SelectItem value="new">+ Criar novo departamento</SelectItem>
+                  </SelectContent>
+                </Select>
+                {!departmentId && (
+                  <Input
+                    value={newDepartmentName}
+                    onChange={(event) => setNewDepartmentName(event.target.value)}
+                    placeholder="Nome do novo departamento"
+                  />
+                )}
+              </div>
+              <div className="space-y-2">
+                <Label>{obligation ? "Cliente vinculado" : "Clientes vinculados"}</Label>
                 {obligation ? (
                   <Select
                     value={clientIds[0] || "none"}
@@ -288,7 +386,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                       <SelectValue placeholder="Selecione o cliente" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">Selecione o cliente</SelectItem>
+                      <SelectItem value="none">Nenhum cliente específico</SelectItem>
                       {activeClients.map((client) => (
                         <SelectItem key={client.id} value={client.id}>
                           {client.name}
@@ -306,7 +404,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                       >
                         <span className="truncate text-left">
                           {selectedClientNames.length === 0
-                            ? "Selecione os clientes"
+                            ? "Nenhum cliente específico"
                             : selectedClientNames.length === 1
                               ? selectedClientNames[0]
                               : `${selectedClientNames.length} clientes selecionados`}
