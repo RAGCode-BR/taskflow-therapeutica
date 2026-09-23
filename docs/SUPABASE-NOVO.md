@@ -34,8 +34,8 @@ confirme que o project ref exibido e exatamente `csubegotswfskibzscch`.
 ## Por que as chaves publicas entram no build?
 
 O cliente Supabase executado no navegador precisa da URL do projeto e da chave
-publica. O Vite substitui as variaveis `VITE_*` durante o build, tanto no deploy
-principal da Vercel quanto no build estatico alternativo do GitHub Pages. A
+publica. O Vite substitui as variaveis `VITE_*` durante o build do Cloudflare
+Workers e no build estatico alternativo do GitHub Pages. A
 `service_role` e os demais secrets nunca podem usar o prefixo `VITE_`.
 
 ## O que nao copiar

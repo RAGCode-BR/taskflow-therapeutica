@@ -1,8 +1,8 @@
 # Deploy no Cloudflare Workers
 
 Este projeto gera uma aplicação SSR para **Cloudflare Workers**, com os assets
-do frontend e da PWA publicados junto ao Worker. O deploy Cloudflare é separado
-do build Vercel já existente.
+do frontend e da PWA publicados junto ao Worker. Cloudflare Workers é o único
+destino de produção; o GitHub é usado como origem do código.
 
 O repositório usa npm e `package-lock.json` como fonte única das dependências.
 Não adicione outro lockfile, pois o Cloudflare seleciona automaticamente o
@@ -83,9 +83,13 @@ os scripts usam explicitamente esse arquivo gerado.
 ## Configuração de CI / Workers Builds
 
 - Versão do Node: `22` ou superior.
+- Comando de instalação: `npm ci`.
 - Comando de build: `npm run build:cloudflare`.
 - Comando de deploy: `npx wrangler deploy --config .output/server/wrangler.json`.
 - Diretório raiz: raiz deste repositório.
+
+Não configure `bun install` ou `bun run build`: o lockfile oficial deste projeto
+é `package-lock.json` e deve ser instalado com npm.
 
 ## Depois do primeiro deploy
 

@@ -9,9 +9,6 @@ import { VitePWA } from "vite-plugin-pwa";
 import { readFileSync } from "node:fs";
 import { deflateSync, inflateSync } from "node:zlib";
 
-const deployTarget = process.env.DEPLOY_TARGET === "cloudflare" ? "cloudflare" : "vercel";
-const isCloudflareBuild = deployTarget === "cloudflare";
-
 function crc32(data: Buffer) {
   let crc = 0xffffffff;
   for (const byte of data) {
@@ -77,7 +74,7 @@ export default defineConfig({
   plugins: [
     timbradoImagePlugin,
     VitePWA({
-      outDir: isCloudflareBuild ? ".output/public" : ".vercel/output/static",
+      outDir: ".output/public",
       // Não substitua o service worker no meio de uma sessão. Com atualização
       // automática, uma página ainda usando chunks antigos podia perder esses
       // arquivos do cache e falhar ao abrir Dashboard/Clientes sem internet.
@@ -134,14 +131,11 @@ export default defineConfig({
       },
     }),
   ],
-  // Keep Vercel as the default build while exposing an isolated Cloudflare
-  // Workers target through `npm run build:cloudflare`.
-  nitro: isCloudflareBuild
-    ? {
-        preset: "cloudflare-module",
-        cloudflare: { nodeCompat: true, deployConfig: true },
-      }
-    : { preset: "vercel" },
+  // Cloudflare Workers is the only production target for this application.
+  nitro: {
+    preset: "cloudflare-module",
+    cloudflare: { nodeCompat: true, deployConfig: true },
+  },
   tanstackStart: {
     // Redirect TanStack Start's bundled server entry to src/server.ts (our SSR error wrapper).
     // nitro/vite builds from this

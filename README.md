@@ -50,7 +50,7 @@ pela aplicação está em `src/assets/therapeutica-logo.png`.
 
 - React 19 e TypeScript.
 - TanStack Router e TanStack Start.
-- Vite 7 e Nitro com alvos para Cloudflare Workers e Vercel.
+- Vite 7 e Nitro com alvo para Cloudflare Workers.
 - TanStack Query.
 - Tailwind CSS 4 e componentes Radix UI/shadcn.
 - Supabase Postgres, Auth, Storage, Realtime e Row Level Security.
@@ -123,8 +123,8 @@ servidor. Eles nunca podem ser importados por componentes do navegador.
 | Comando                             | Finalidade                                           |
 | ----------------------------------- | ---------------------------------------------------- |
 | `npm run dev`                       | Inicia o ambiente local.                             |
-| `npm run build`                     | Gera o build de produção para Vercel.                |
-| `npm run build:cloudflare`          | Gera o Worker SSR e seus assets em `.output`.        |
+| `npm run build`                     | Gera o Worker SSR e seus assets em `.output`.        |
+| `npm run build:cloudflare`          | Alias explícito do build para Cloudflare.            |
 | `npm run preview:cloudflare`        | Executa o build no runtime local do Cloudflare.      |
 | `npm run deploy:cloudflare:dry-run` | Valida o pacote Cloudflare sem publicar.             |
 | `npm run deploy:cloudflare`         | Publica no Cloudflare Workers.                       |
@@ -272,15 +272,10 @@ npm run deploy:cloudflare
 As instruções completas de variáveis, secrets, CI e domínio estão em
 [`docs/DEPLOY-CLOUDFLARE.md`](docs/DEPLOY-CLOUDFLARE.md).
 
-O fluxo Vercel continua disponível separadamente:
-
-```bash
-npm run build
-```
-
-O build Cloudflare fica em `.output`; o resultado Vercel segue seu Build Output
-em `.vercel/output`. Configure na plataforma escolhida todas as variáveis
-públicas e secrets necessários antes de publicar.
+O Cloudflare é o único destino de produção. O GitHub armazena o código e dispara
+o Workers Builds; o Supabase fornece banco, autenticação, storage e realtime.
+O build fica em `.output`. Configure no Cloudflare todas as variáveis públicas e
+secrets necessários antes de publicar.
 
 Após o primeiro domínio público:
 
