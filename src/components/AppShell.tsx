@@ -15,12 +15,7 @@ import {
   PanelRight,
   BarChart3,
   Trash2,
-  FileUp,
-  PanelsTopLeft,
-  CalendarDays,
   CalendarCog,
-  CircleDollarSign,
-  ChevronDown,
   MessageSquareText,
   MessagesSquare,
   Layers3,
@@ -29,13 +24,6 @@ import { NotificationBell } from "@/components/NotificationBell";
 import { AssignmentPopup } from "@/components/AssignmentPopup";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import therapeuticaLogo from "@/assets/therapeutica-logo.png";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuTrigger,
-} from "@/components/ui/dropdown-menu";
 import { useMuralUnreadCount } from "@/hooks/use-mural-unread";
 import { useMuralLaunchDigest } from "@/hooks/use-mural-launch-digest";
 import { useMuralRealtime } from "@/hooks/use-mural-realtime";
@@ -66,11 +54,8 @@ const allNav: readonly NavItem[] = [
   { to: "/tasks", label: "Minhas Tarefas", icon: ListChecks },
   { to: "/conversations", label: "Conversas", icon: MessagesSquare },
   { to: "/obligations", label: "Obrigações", icon: CalendarCog },
-  { to: "/import-ata", label: "Importar Ata", icon: FileUp },
   { to: "/clients", label: "Clientes", icon: Building2 },
   { to: "/reports", label: "Relatórios", icon: BarChart3 },
-  { to: "/agenda", label: "Agenda", icon: CalendarDays },
-  { to: "/portal", label: "Portal do Cliente", icon: PanelsTopLeft },
   { to: "/users", label: "Usuários", icon: Users, adminOnly: true },
   { to: "/trash", label: "Lixeira", icon: Trash2 },
   { to: "/settings", label: "Personalizar", icon: Settings },
@@ -86,8 +71,6 @@ export function AppShell({ children }: { children: ReactNode }) {
   useMuralRealtime();
   const conversationsUnread = useTaskConversationsUnread();
   useTaskConversationRealtime();
-  const canAccessDeliveries = hasPermission("portal_entregas") || hasPermission("portal");
-  const canAccessFinance = hasPermission("portal_financeiro") || hasPermission("portal");
   const canSwitchEnvironments = canSwitchTaskFlowEnvironment(workspaces.length);
   const nav = useMemo(() => {
     const accessByPath: Record<string, string> = {
@@ -95,20 +78,17 @@ export function AppShell({ children }: { children: ReactNode }) {
       "/tasks": "tasks",
       "/conversations": "conversations",
       "/obligations": "obligations",
-      "/import-ata": "import_ata",
       "/clients": "clients",
       "/reports": "reports",
       "/mural": "mural",
-      "/agenda": "agenda",
       "/users": "users",
       "/trash": "trash",
       "/settings": "settings",
     };
-    return allNav.filter((item) => {
-      if (item.to === "/portal") return canAccessDeliveries || canAccessFinance;
-      return (!item.adminOnly || isAdmin) && hasPermission(accessByPath[item.to]);
-    });
-  }, [canAccessDeliveries, canAccessFinance, isAdmin, hasPermission]);
+    return allNav.filter(
+      (item) => (!item.adminOnly || isAdmin) && hasPermission(accessByPath[item.to]),
+    );
+  }, [isAdmin, hasPermission]);
 
   const { theme, toggle } = useTheme();
   const [sidebarOpen, setSidebarOpen] = useState(() => {
@@ -163,17 +143,6 @@ export function AppShell({ children }: { children: ReactNode }) {
 
         <nav className="sidebar-nav min-h-0 flex-1 space-y-1 overflow-y-auto px-3">
           {nav.map((n) => {
-            if (n.to === "/portal")
-              return (
-                <PortalNavGroup
-                  key={n.to}
-                  expanded={sidebarOpen}
-                  active={pathname.startsWith("/portal/")}
-                  pathname={pathname}
-                  canAccessDeliveries={canAccessDeliveries}
-                  canAccessFinance={canAccessFinance}
-                />
-              );
             const Active = pathname === n.to || pathname.startsWith(n.to + "/");
             const Icon = n.icon;
             return (
@@ -301,18 +270,6 @@ export function AppShell({ children }: { children: ReactNode }) {
             </div>
             <nav className="flex-1 space-y-1 px-3">
               {nav.map((n) => {
-                if (n.to === "/portal")
-                  return (
-                    <PortalNavGroup
-                      key={n.to}
-                      expanded
-                      active={pathname.startsWith("/portal/")}
-                      pathname={pathname}
-                      canAccessDeliveries={canAccessDeliveries}
-                      canAccessFinance={canAccessFinance}
-                      onNavigate={() => setSidebarOpen(false)}
-                    />
-                  );
                 const Active = pathname === n.to || pathname.startsWith(n.to + "/");
                 const Icon = n.icon;
                 return (
@@ -409,110 +366,5 @@ export function AppShell({ children }: { children: ReactNode }) {
       </main>
       <AssignmentPopup />
     </div>
-  );
-}
-
-function PortalNavGroup({
-  expanded,
-  active,
-  pathname,
-  canAccessDeliveries,
-  canAccessFinance,
-  onNavigate,
-}: {
-  expanded: boolean;
-  active: boolean;
-  pathname: string;
-  canAccessDeliveries: boolean;
-  canAccessFinance: boolean;
-  onNavigate?: () => void;
-}) {
-  const deliveriesActive = pathname.startsWith("/portal/entregas");
-  const financeActive = pathname.startsWith("/portal/financeiro");
-
-  if (!expanded)
-    return (
-      <DropdownMenu>
-        <DropdownMenuTrigger asChild>
-          <button
-            type="button"
-            title="Portal do Cliente"
-            className={`flex w-full justify-center rounded-full px-2 py-2 transition ${active ? "bg-sidebar-primary/10 text-sidebar-primary" : "text-sidebar-foreground/70 hover:bg-sidebar-accent/10 hover:text-sidebar-foreground"}`}
-          >
-            <span
-              className={`grid h-7 w-7 place-items-center ${active ? "rounded-full bg-sidebar-primary text-sidebar-primary-foreground" : ""}`}
-            >
-              <PanelsTopLeft className="h-4 w-4" />
-            </span>
-          </button>
-        </DropdownMenuTrigger>
-        <DropdownMenuContent side="right" align="start" className="min-w-56 p-1.5">
-          {canAccessDeliveries && (
-            <DropdownMenuItem asChild>
-              <Link
-                to="/portal/entregas"
-                className={deliveriesActive ? "bg-sidebar-primary/10 text-sidebar-primary" : ""}
-              >
-                <CalendarCog className="h-4 w-4" />
-                Calendário de Entregas
-              </Link>
-            </DropdownMenuItem>
-          )}
-          {canAccessFinance && (
-            <DropdownMenuItem asChild>
-              <Link
-                to="/portal/financeiro"
-                className={financeActive ? "bg-sidebar-primary/10 text-sidebar-primary" : ""}
-              >
-                <CircleDollarSign className="h-4 w-4" />
-                Financeiro
-              </Link>
-            </DropdownMenuItem>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-    );
-  return (
-    <Collapsible defaultOpen={active} className="space-y-1">
-      <CollapsibleTrigger
-        className={`flex w-full items-center gap-3 rounded-full px-3 py-2 text-sm transition ${active ? "bg-sidebar-primary/10 text-sidebar-primary font-medium" : "text-sidebar-foreground/80 hover:bg-sidebar-accent/10 hover:text-sidebar-foreground"}`}
-      >
-        <span className="grid h-7 w-7 shrink-0 place-items-center">
-          <PanelsTopLeft className="h-4 w-4" />
-        </span>
-        <span className="flex-1 text-left">Portal do Cliente</span>
-        <ChevronDown className="h-4 w-4" />
-      </CollapsibleTrigger>
-      <CollapsibleContent className="relative ml-6 space-y-1 border-l border-sidebar-primary/25 pl-3">
-        {canAccessDeliveries && (
-          <Link
-            to="/portal/entregas"
-            onClick={onNavigate}
-            className={`flex items-center gap-3 rounded-full px-3 py-2 text-sm transition ${deliveriesActive ? "border border-sidebar-primary bg-sidebar/45 text-sidebar-foreground font-medium shadow-sm" : "text-sidebar-foreground/80 hover:bg-sidebar-accent/10 hover:text-sidebar-foreground"}`}
-          >
-            <span
-              className={`grid h-7 w-7 shrink-0 place-items-center ${deliveriesActive ? "rounded-full bg-sidebar-primary text-sidebar-primary-foreground" : ""}`}
-            >
-              <CalendarCog className="h-4 w-4" />
-            </span>
-            Calendário de Entregas
-          </Link>
-        )}
-        {canAccessFinance && (
-          <Link
-            to="/portal/financeiro"
-            onClick={onNavigate}
-            className={`flex items-center gap-3 rounded-full px-3 py-2 text-sm transition ${financeActive ? "border border-sidebar-primary bg-sidebar/45 text-sidebar-foreground font-medium shadow-sm" : "text-sidebar-foreground/80 hover:bg-sidebar-accent/10 hover:text-sidebar-foreground"}`}
-          >
-            <span
-              className={`grid h-7 w-7 shrink-0 place-items-center ${financeActive ? "rounded-full bg-sidebar-primary text-sidebar-primary-foreground" : ""}`}
-            >
-              <CircleDollarSign className="h-4 w-4" />
-            </span>
-            Financeiro
-          </Link>
-        )}
-      </CollapsibleContent>
-    </Collapsible>
   );
 }

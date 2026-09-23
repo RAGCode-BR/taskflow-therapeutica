@@ -10,13 +10,14 @@ import { useAuth } from "@/hooks/use-auth";
 import { toast } from "sonner";
 import { CheckCircle2, Loader2 } from "lucide-react";
 import therapeuticaLogo from "@/assets/therapeutica-logo.png";
+import { loginIdentifierToEmail } from "@/lib/user-login";
 
 export const Route = createFileRoute("/auth")({ component: AuthPage });
 
 function AuthPage() {
   const navigate = useNavigate();
   const { user } = useAuth();
-  const [email, setEmail] = useState("");
+  const [login, setLogin] = useState("");
   const [password, setPassword] = useState("");
   const [passwordConfirmation, setPasswordConfirmation] = useState("");
   const [loading, setLoading] = useState(false);
@@ -30,7 +31,10 @@ function AuthPage() {
     e.preventDefault();
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.signInWithPassword({
+        email: loginIdentifierToEmail(login),
+        password,
+      });
       if (error) throw error;
       toast.success("Bem-vindo de volta!");
     } catch (err) {
@@ -149,13 +153,13 @@ function AuthPage() {
             <>
               <form onSubmit={onSubmit} className="mt-6 space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor="email">E-mail</Label>
+                  <Label htmlFor="login">Login ou e-mail</Label>
                   <Input
-                    id="email"
-                    type="email"
-                    autoComplete="email"
-                    value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    id="login"
+                    type="text"
+                    autoComplete="username"
+                    value={login}
+                    onChange={(e) => setLogin(e.target.value)}
                     required
                   />
                 </div>

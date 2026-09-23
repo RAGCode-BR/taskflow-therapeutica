@@ -32,6 +32,7 @@ import {
   UserX,
 } from "lucide-react";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
+import { isValidUsername } from "@/lib/user-login";
 
 export const Route = createFileRoute("/_app/users")({ component: UsersPage });
 
@@ -40,13 +41,9 @@ const ACCESS_OPTIONS = [
   ["tasks", "Minhas tarefas"],
   ["conversations", "Conversas"],
   ["obligations", "Obrigações"],
-  ["import_ata", "Importar ata"],
   ["clients", "Clientes"],
   ["reports", "Relatórios"],
   ["mural", "Mural"],
-  ["agenda", "Agenda"],
-  ["portal_entregas", "Calendário de entregas"],
-  ["portal_financeiro", "Financeiro"],
   ["trash", "Lixeira"],
   ["settings", "Personalizar"],
 ] as const;
@@ -54,7 +51,7 @@ const SINGLE_WORKSPACE = true;
 type Role = "admin" | "collaborator" | "client";
 type FormState = {
   fullName: string;
-  email: string;
+  login: string;
   password: string;
   role: Role;
   permissions: string[];
@@ -67,19 +64,16 @@ const COLLABORATOR_DEFAULT_PERMISSIONS = [
   "conversations",
   "clients",
   "mural",
-  "agenda",
   "trash",
   "settings",
 ];
 const defaults: FormState = {
   fullName: "",
-  email: "",
+  login: "",
   password: "",
   role: "collaborator",
-  // Padrão da casa para um colaborador: acesso ao dia a dia da tarefa, sem
-  // as áreas de gestão (obrigações, solicitações, relatórios, calendário de
-  // entregas, financeiro) nem importação de ata — quem precisa delas ganha
-  // manualmente aqui.
+  // Padrão da casa para um colaborador: acesso ao dia a dia. Obrigações e
+  // relatórios continuam disponíveis para liberação manual pelo administrador.
   permissions: COLLABORATOR_DEFAULT_PERMISSIONS,
   clientId: "",
   marketingAccess: false,
@@ -122,13 +116,36 @@ function AccessForm({
             />
           </div>
           <div className="space-y-2">
-            <Label>Login (e-mail)</Label>
+            <Label>Login</Label>
             <Input
-              type="email"
-              value={value.email}
-              onChange={(e) => onChange({ ...value, email: e.target.value })}
+              type="text"
+              autoComplete="off"
+              minLength={3}
+              maxLength={32}
+              pattern="[A-Za-z0-9][A-Za-z0-9._-]{1,30}[A-Za-z0-9]"
+              value={value.login}
+              onChange={(e) => onChange({ ...value, login: e.target.value.toLowerCase() })}
+              placeholder="Ex.: gabriel.silva"
               required
             />
+            <p className="text-xs text-muted-foreground">
+              Use de 3 a 32 caracteres: letras, números, ponto, hífen ou sublinhado.
+            </p>
+          </div>
+          <div className="space-y-2">
+            <Label>Senha temporária</Label>
+            <Input
+              type="password"
+              autoComplete="new-password"
+              minLength={8}
+              maxLength={128}
+              value={value.password}
+              onChange={(e) => onChange({ ...value, password: e.target.value })}
+              required
+            />
+            <p className="text-xs text-muted-foreground">
+              No primeiro acesso, o usuário será obrigado a criar uma senha definitiva.
+            </p>
           </div>
         </>
       )}
@@ -144,7 +161,7 @@ function AccessForm({
               role: e.target.value as Role,
               permissions:
                 e.target.value === "client"
-                  ? ["portal_entregas", "portal_financeiro"]
+                  ? []
                   : // Trocar de Admin/Cliente para Colaborador não deve carregar
                     // sobras de outra categoria — volta ao padrão da casa, do
                     // mesmo jeito que Cliente já reseta ao entrar nela.
@@ -364,16 +381,26 @@ function UsersPage() {
     qc.invalidateQueries({ queryKey: ["current_workspace_members"] });
   };
   const createMutation = useMutation({
-    mutationFn: () =>
-      invokeAccessManager(
+    mutationFn: () => {
+      if (form.fullName.trim().length < 2) throw new Error("Informe o nome completo.");
+      if (!isValidUsername(form.login))
+        throw new Error(
+          "Use um login de 3 a 32 caracteres, com letras, números, ponto, hífen ou sublinhado.",
+        );
+      if (form.password.length < 8)
+        throw new Error("A senha temporária deve ter ao menos 8 caracteres.");
+      if (form.role === "client" && !form.clientId)
+        throw new Error("Selecione o cliente que será vinculado a este acesso.");
+      return invokeAccessManager(
         "create",
         inMarketing ? { ...form, role: "collaborator", marketingAccess: true } : form,
-      ),
+      );
+    },
     onSuccess: () => {
       refresh();
       setCreateOpen(false);
       setForm(defaults);
-      toast.success("Convite enviado com sucesso.");
+      toast.success("Usuário criado com senha temporária.");
     },
     onError: (e: any) => toast.error(e?.message ?? "Erro ao criar acesso"),
   });
@@ -451,11 +478,18 @@ function UsersPage() {
     },
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível excluir o acesso."),
   });
-  const profilesWithEmails = useMemo(() => {
-    const emailsById = new Map(
-      profileEmails.map((item: { id: string; email: string | null }) => [item.id, item.email]),
+  const profilesWithCredentials = useMemo(() => {
+    const credentialsById = new Map(
+      profileEmails.map((item: { id: string; email: string | null; login: string | null }) => [
+        item.id,
+        { email: item.email, login: item.login },
+      ]),
     );
-    return profiles.map((profile) => ({ ...profile, email: emailsById.get(profile.id) ?? null }));
+    return profiles.map((profile) => ({
+      ...profile,
+      email: credentialsById.get(profile.id)?.email ?? null,
+      login: credentialsById.get(profile.id)?.login ?? null,
+    }));
   }, [profiles, profileEmails]);
   const workspaceMemberIds = useMemo(
     () => new Set(currentWorkspaceMembers.map((member) => member.user_id)),
@@ -463,17 +497,17 @@ function UsersPage() {
   );
   const activeProfiles = useMemo(
     () =>
-      profilesWithEmails.filter(
+      profilesWithCredentials.filter(
         (p) => workspaceMemberIds.has(p.id) && (p as any).is_active !== false,
       ),
-    [profilesWithEmails, workspaceMemberIds],
+    [profilesWithCredentials, workspaceMemberIds],
   );
   const inactiveProfiles = useMemo(
     () =>
-      profilesWithEmails.filter(
+      profilesWithCredentials.filter(
         (p) => workspaceMemberIds.has(p.id) && (p as any).is_active === false,
       ),
-    [profilesWithEmails, workspaceMemberIds],
+    [profilesWithCredentials, workspaceMemberIds],
   );
   const activeProfilesByRole = useMemo(() => {
     const byRole: Record<Role, any[]> = { admin: [], collaborator: [], client: [] };
@@ -533,7 +567,7 @@ function UsersPage() {
           </Avatar>
           <div className="min-w-0 flex-1">
             <h3 className="truncate font-semibold">{p.full_name || "Sem nome"}</h3>
-            <p className="truncate text-xs text-muted-foreground">{p.email}</p>
+            <p className="truncate text-xs text-muted-foreground">{p.login ?? p.email}</p>
           </div>
           {role === "admin" ? (
             <ShieldCheck className="h-4 w-4 text-primary" />
@@ -642,8 +676,8 @@ function UsersPage() {
               <DialogHeader>
                 <DialogTitle>Criar acesso</DialogTitle>
                 <DialogDescription>
-                  O usuário receberá um convite por e-mail para criar a própria senha e ativar o
-                  acesso.
+                  Defina o login, a senha temporária, a categoria e as permissões. No primeiro
+                  acesso, o usuário criará a própria senha definitiva.
                 </DialogDescription>
               </DialogHeader>
               <AccessForm
@@ -656,7 +690,7 @@ function UsersPage() {
               />
               <DialogFooter>
                 <Button disabled={createMutation.isPending} onClick={() => createMutation.mutate()}>
-                  {createMutation.isPending ? "Enviando…" : "Enviar convite"}
+                  {createMutation.isPending ? "Criando…" : "Criar usuário"}
                 </Button>
               </DialogFooter>
             </DialogContent>
@@ -699,7 +733,7 @@ function UsersPage() {
             {inactiveProfiles.map((p: any) => (
               <Card key={p.id} className="border-dashed p-4 opacity-75">
                 <p className="font-medium">{p.full_name || p.email}</p>
-                <p className="mt-1 truncate text-xs text-muted-foreground">{p.email}</p>
+                <p className="mt-1 truncate text-xs text-muted-foreground">{p.login ?? p.email}</p>
                 <Button
                   size="sm"
                   className="mt-3 w-full"

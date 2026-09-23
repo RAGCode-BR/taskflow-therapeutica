@@ -14,6 +14,7 @@ import { Route as AppRouteImport } from './routes/_app'
 import { Route as AuthRouteImport } from './routes/auth'
 import { Route as AppAgendaRouteImport } from './routes/_app/agenda'
 import { Route as AppAmbientesRouteImport } from './routes/_app/ambientes'
+import { Route as AppChangePasswordRouteImport } from './routes/_app/change-password'
 import { Route as AppClientsRouteImport } from './routes/_app/clients'
 import { Route as AppConversationsRouteImport } from './routes/_app/conversations'
 import { Route as AppDashboardRouteImport } from './routes/_app/dashboard'
@@ -61,6 +62,11 @@ const AppAgendaRoute = AppAgendaRouteImport.update({
 const AppAmbientesRoute = AppAmbientesRouteImport.update({
   id: '/ambientes',
   path: '/ambientes',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppChangePasswordRoute = AppChangePasswordRouteImport.update({
+  id: '/change-password',
+  path: '/change-password',
   getParentRoute: () => AppRoute,
 } as any)
 const AppClientsRoute = AppClientsRouteImport.update({
@@ -190,6 +196,7 @@ export interface FileRoutesByFullPath {
   '/auth': typeof AuthRoute
   '/agenda': typeof AppAgendaRoute
   '/ambientes': typeof AppAmbientesRoute
+  '/change-password': typeof AppChangePasswordRoute
   '/clients': typeof AppClientsRouteWithChildren
   '/conversations': typeof AppConversationsRoute
   '/dashboard': typeof AppDashboardRoute
@@ -220,6 +227,7 @@ export interface FileRoutesByTo {
   '/auth': typeof AuthRoute
   '/agenda': typeof AppAgendaRoute
   '/ambientes': typeof AppAmbientesRoute
+  '/change-password': typeof AppChangePasswordRoute
   '/conversations': typeof AppConversationsRoute
   '/dashboard': typeof AppDashboardRoute
   '/import-ata': typeof AppImportAtaRoute
@@ -250,6 +258,7 @@ export interface FileRoutesById {
   '/auth': typeof AuthRoute
   '/_app/agenda': typeof AppAgendaRoute
   '/_app/ambientes': typeof AppAmbientesRoute
+  '/_app/change-password': typeof AppChangePasswordRoute
   '/_app/clients': typeof AppClientsRouteWithChildren
   '/_app/conversations': typeof AppConversationsRoute
   '/_app/dashboard': typeof AppDashboardRoute
@@ -282,6 +291,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/agenda'
     | '/ambientes'
+    | '/change-password'
     | '/clients'
     | '/conversations'
     | '/dashboard'
@@ -312,6 +322,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/agenda'
     | '/ambientes'
+    | '/change-password'
     | '/conversations'
     | '/dashboard'
     | '/import-ata'
@@ -341,6 +352,7 @@ export interface FileRouteTypes {
     | '/auth'
     | '/_app/agenda'
     | '/_app/ambientes'
+    | '/_app/change-password'
     | '/_app/clients'
     | '/_app/conversations'
     | '/_app/dashboard'
@@ -408,6 +420,13 @@ declare module '@tanstack/react-router' {
       path: '/ambientes'
       fullPath: '/ambientes'
       preLoaderRoute: typeof AppAmbientesRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/_app/change-password': {
+      id: '/_app/change-password'
+      path: '/change-password'
+      fullPath: '/change-password'
+      preLoaderRoute: typeof AppChangePasswordRouteImport
       parentRoute: typeof AppRoute
     }
     '/_app/clients': {
@@ -620,6 +639,7 @@ const AppTasksRouteWithChildren = AppTasksRoute._addFileChildren(
 interface AppRouteChildren {
   AppAgendaRoute: typeof AppAgendaRoute
   AppAmbientesRoute: typeof AppAmbientesRoute
+  AppChangePasswordRoute: typeof AppChangePasswordRoute
   AppClientsRoute: typeof AppClientsRouteWithChildren
   AppConversationsRoute: typeof AppConversationsRoute
   AppDashboardRoute: typeof AppDashboardRoute
@@ -641,6 +661,7 @@ interface AppRouteChildren {
 const AppRouteChildren: AppRouteChildren = {
   AppAgendaRoute: AppAgendaRoute,
   AppAmbientesRoute: AppAmbientesRoute,
+  AppChangePasswordRoute: AppChangePasswordRoute,
   AppClientsRoute: AppClientsRouteWithChildren,
   AppConversationsRoute: AppConversationsRoute,
   AppDashboardRoute: AppDashboardRoute,

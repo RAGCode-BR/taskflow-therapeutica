@@ -133,6 +133,7 @@ export interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
+  login?: string | null;
   avatar_url: string | null;
   is_active?: boolean;
   /** Slugs dos ambientes da pessoa; só vem de list_task_assignees. */

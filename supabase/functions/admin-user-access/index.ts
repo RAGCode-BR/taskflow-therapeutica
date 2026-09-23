@@ -10,30 +10,23 @@ const allAdminPermissions = [
   "dashboard",
   "tasks",
   "conversations",
-  "import_ata",
+  "obligations",
   "clients",
   "reports",
   "mural",
-  "agenda",
-  "portal_entregas",
-  "portal_financeiro",
   "users",
   "trash",
   "settings",
 ];
-const clientPermissions = ["portal_entregas", "portal_financeiro"];
+const usernameEmailDomain = "users.taskflow.invalid";
 const validPermissions = new Set([
   "dashboard",
   "tasks",
   "conversations",
   "obligations",
-  "import_ata",
   "clients",
   "reports",
   "mural",
-  "agenda",
-  "portal_entregas",
-  "portal_financeiro",
   "trash",
   "settings",
 ]);
@@ -92,7 +85,10 @@ Deno.serve(async (request) => {
     if (action !== "delete" && role === "client" && !validUuid(data.clientId))
       return response({ error: "Selecione o cliente que será vinculado a este acesso." }, 400);
     if (action === "create" && data.marketingAccess === true && role === "client")
-      return response({ error: "O acesso de cliente deve permanecer vinculado à Consultoria." }, 400);
+      return response(
+        { error: "O acesso de cliente deve permanecer vinculado à Consultoria." },
+        400,
+      );
 
     const { data: callerProfile, error: callerProfileError } = await admin
       .from("profiles")
@@ -120,7 +116,10 @@ Deno.serve(async (request) => {
 
     if (managesMarketing && action === "create") {
       if (role !== "collaborator" || data.marketingAccess !== true)
-        return response({ error: "No Marketing, crie somente colaboradores próprios do ambiente." }, 403);
+        return response(
+          { error: "No Marketing, crie somente colaboradores próprios do ambiente." },
+          403,
+        );
     }
 
     if (action !== "create") {
@@ -145,32 +144,45 @@ Deno.serve(async (request) => {
                 (permission): permission is string =>
                   typeof permission === "string" && validPermissions.has(permission),
               )
-            : role === "client"
-              ? clientPermissions
-              : [];
+            : [];
 
     if (action === "create") {
       if (typeof data.fullName !== "string" || data.fullName.trim().length < 2)
         return response({ error: "Informe o nome completo." }, 400);
-      if (typeof data.email !== "string" || !/^\S+@\S+\.\S+$/.test(data.email))
-        return response({ error: "Informe um e-mail válido." }, 400);
-      const invitedEmail = data.email.trim().toLowerCase();
+      if (
+        typeof data.login !== "string" ||
+        !/^[a-z0-9](?:[a-z0-9._-]{1,30}[a-z0-9])$/.test(data.login.trim().toLowerCase())
+      )
+        return response(
+          {
+            error:
+              "Use um login de 3 a 32 caracteres, com letras, números, ponto, hífen ou sublinhado.",
+          },
+          400,
+        );
+      if (typeof data.password !== "string" || data.password.length < 8)
+        return response({ error: "A senha temporária deve ter ao menos 8 caracteres." }, 400);
+      const login = data.login.trim().toLowerCase();
+      const internalEmail = `${login}@${usernameEmailDomain}`;
       const { error: allowInvitationError } = await admin.from("access_invitations").upsert({
-        email: invitedEmail,
+        email: internalEmail,
         invited_by: authData.user.id,
-        expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+        expires_at: new Date(Date.now() + 10 * 60 * 1000).toISOString(),
       });
       if (allowInvitationError) throw allowInvitationError;
-      const redirectTo = Deno.env.get("INVITE_REDIRECT_URL");
-      const { data: created, error: createError } = await admin.auth.admin.inviteUserByEmail(
-        invitedEmail,
-        {
-          ...(redirectTo ? { redirectTo } : {}),
-          data: { full_name: data.fullName.trim() },
-        },
-      );
-      if (createError || !created.user)
-        throw createError ?? new Error("Não foi possível enviar o convite.");
+      const { data: created, error: createError } = await admin.auth.admin.createUser({
+        email: internalEmail,
+        password: data.password,
+        email_confirm: true,
+        user_metadata: { full_name: data.fullName.trim(), login },
+        app_metadata: { login, credential_type: "username", must_change_password: true },
+      });
+      if (createError || !created.user) {
+        await admin.from("access_invitations").delete().eq("email", internalEmail);
+        if (/already|registered|exists/i.test(createError?.message ?? ""))
+          return response({ error: "Este login já está em uso." }, 409);
+        throw createError ?? new Error("Não foi possível criar o usuário.");
+      }
 
       // The database trigger creates every invited account as a collaborator
       // first. Replace that temporary role with the category selected by the
@@ -251,11 +263,28 @@ Deno.serve(async (request) => {
           { error: "Você não pode remover seu próprio acesso de administrador." },
           400,
         );
+      const { data: targetAuthData, error: targetAuthError } = await admin.auth.admin.getUserById(
+        data.userId,
+      );
+      if (targetAuthError || !targetAuthData.user)
+        throw targetAuthError ?? new Error("Usuário não encontrado.");
       const authUpdate = {
         // The Admin API accepts user_metadata (not the client-side `data`
         // property). Using `data` made every access update be rejected by GoTrue.
-        user_metadata: { full_name: data.fullName.trim(), role },
+        user_metadata: {
+          ...(targetAuthData.user.user_metadata ?? {}),
+          full_name: data.fullName.trim(),
+          role,
+        },
         ...(data.password ? { password: data.password } : {}),
+        ...(data.password
+          ? {
+              app_metadata: {
+                ...(targetAuthData.user.app_metadata ?? {}),
+                must_change_password: true,
+              },
+            }
+          : {}),
       };
       const { error: authUpdateError } = await admin.auth.admin.updateUserById(
         data.userId,

@@ -1,5 +1,9 @@
 project_id = "csubegotswfskibzscch"
 
+[auth]
+site_url = "https://taskflow-therapeutica.ragcodebr.workers.dev"
+additional_redirect_urls = ["https://taskflow-therapeutica.ragcodebr.workers.dev/auth?invite=1"]
+
 # These functions validate the bearer token or one-time OAuth state in their
 # own code. OAuth provider callbacks do not carry a Supabase JWT.
 [functions.agenda-events]
@@ -10,6 +14,9 @@ verify_jwt = false
 
 [functions.google-calendar-sync]
 verify_jwt = false
+
+[functions.complete-password-change]
+verify_jwt = true
 
 [functions.instagram-oauth-callback]
 verify_jwt = false

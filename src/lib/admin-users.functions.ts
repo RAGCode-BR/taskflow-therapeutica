@@ -48,20 +48,16 @@ export const createUserAccess = createServerFn({ method: "POST" })
           ? [
               "dashboard",
               "tasks",
-              "import_ata",
+              "conversations",
+              "obligations",
               "clients",
               "reports",
               "mural",
-              "agenda",
-              "portal_entregas",
-              "portal_financeiro",
               "users",
               "trash",
               "settings",
             ]
-          : data.role === "client"
-            ? ["portal_entregas", "portal_financeiro"]
-            : data.permissions,
+          : data.permissions,
       updated_by: callerId,
     });
     if (permissionsError) throw new Error(permissionsError.message);
@@ -102,31 +98,25 @@ export const updateUserAccess = createServerFn({ method: "POST" })
       .from("user_roles")
       .insert({ user_id: data.userId, role: data.role });
     if (insertRoleError) throw new Error(insertRoleError.message);
-    const { error: permissionsError } = await supabaseAdmin
-      .from("user_permissions")
-      .upsert({
-        user_id: data.userId,
-        permissions:
-          data.role === "admin"
-            ? [
-                "dashboard",
-                "tasks",
-                "import_ata",
-                "clients",
-                "reports",
-                "mural",
-                "agenda",
-                "portal_entregas",
-                "portal_financeiro",
-                "users",
-                "trash",
-                "settings",
-              ]
-            : data.role === "client"
-              ? ["portal_entregas", "portal_financeiro"]
-              : data.permissions,
-        updated_by: callerId,
-      });
+    const { error: permissionsError } = await supabaseAdmin.from("user_permissions").upsert({
+      user_id: data.userId,
+      permissions:
+        data.role === "admin"
+          ? [
+              "dashboard",
+              "tasks",
+              "conversations",
+              "obligations",
+              "clients",
+              "reports",
+              "mural",
+              "users",
+              "trash",
+              "settings",
+            ]
+          : data.permissions,
+      updated_by: callerId,
+    });
     if (permissionsError) throw new Error(permissionsError.message);
     if (data.role === "client" && data.clientId) {
       const { error: linkError } = await (

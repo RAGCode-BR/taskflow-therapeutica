@@ -701,6 +701,7 @@ export type Database = {
           full_name: string | null
           id: string
           is_active: boolean
+          login: string | null
           theme_preferences: Json | null
           updated_at: string
         }
@@ -712,6 +713,7 @@ export type Database = {
           full_name?: string | null
           id: string
           is_active?: boolean
+          login?: string | null
           theme_preferences?: Json | null
           updated_at?: string
         }
@@ -723,6 +725,7 @@ export type Database = {
           full_name?: string | null
           id?: string
           is_active?: boolean
+          login?: string | null
           theme_preferences?: Json | null
           updated_at?: string
         }
@@ -1289,6 +1292,7 @@ export type Database = {
         Returns: {
           email: string
           id: string
+          login: string | null
         }[]
       }
       can_view_task: { Args: { _task_id: string }; Returns: boolean }

@@ -7,7 +7,7 @@ export const Route = createFileRoute("/_app")({
 });
 
 function AppLayout() {
-  const { user, loading, isClient, hasPermission } = useAuth();
+  const { user, loading, isClient, hasPermission, mustChangePassword } = useAuth();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   if (loading) {
     return (
@@ -17,33 +17,26 @@ function AppLayout() {
     );
   }
   if (!user) return <Navigate to="/auth" />;
+  if (mustChangePassword && pathname !== "/change-password") {
+    return <Navigate to="/change-password" replace />;
+  }
   const clientRoutePermissions: Array<[string, string]> = [
     ["/dashboard", "dashboard"],
     ["/tasks", "tasks"],
-    ["/notes", "notes"],
-    ["/import-ata", "import_ata"],
+    ["/conversations", "conversations"],
+    ["/obligations", "obligations"],
     ["/clients", "clients"],
     ["/reports", "reports"],
     ["/trash", "trash"],
     ["/settings", "settings"],
-    ["/agenda", "agenda"],
   ];
   const clientCanAccessCurrentRoute =
     pathname.startsWith("/mural") ||
-    (pathname.startsWith("/portal/entregas") &&
-      (hasPermission("portal_entregas") || hasPermission("portal"))) ||
-    (pathname.startsWith("/portal/financeiro") &&
-      (hasPermission("portal_financeiro") || hasPermission("portal"))) ||
     clientRoutePermissions.some(
       ([path, permission]) => pathname.startsWith(path) && hasPermission(permission),
     );
   if (isClient && !clientCanAccessCurrentRoute) {
-    return (
-      <Navigate
-        to={hasPermission("portal_financeiro") ? "/portal/financeiro" : "/portal/entregas"}
-        replace
-      />
-    );
+    return <Navigate to="/mural" replace />;
   }
   return (
     <AppShell>

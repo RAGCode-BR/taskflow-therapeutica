@@ -85,6 +85,7 @@ function createFallbackSupabaseClient() {
       refreshSession: () => Promise.resolve({ data: { session: null, user: null }, error }),
       onAuthStateChange: () => ({ data: { subscription: { unsubscribe: () => undefined } }, error }),
       signOut: () => Promise.resolve({ error }),
+      updateUser: () => Promise.resolve({ data: { user: null }, error }),
       signInWithPassword: () => Promise.resolve({ data: { user: null, session: null }, error }),
       signUp: () => Promise.resolve({ data: { user: null, session: null }, error }),
       signInWithOAuth: () => Promise.resolve({ data: { provider: '', url: '' }, error }),

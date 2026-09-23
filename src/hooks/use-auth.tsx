@@ -8,6 +8,7 @@ interface Profile {
   id: string;
   full_name: string | null;
   email: string | null;
+  login: string | null;
   avatar_url: string | null;
   theme_preferences: Record<string, unknown> | null;
   active_workspace_id?: string | null;
@@ -34,6 +35,7 @@ interface AuthCtx {
   activeWorkspace: WorkspaceMembership | null;
   setActiveWorkspace: (workspaceId: string) => Promise<void>;
   hasPermission: (permission: string) => boolean;
+  mustChangePassword: boolean;
   loading: boolean;
   signOut: () => Promise<void>;
   refreshProfile: () => Promise<void>;
@@ -43,7 +45,14 @@ const AuthContext = createContext<AuthCtx | undefined>(undefined);
 
 type OfflineAccessSnapshot = Pick<
   AuthCtx,
-  "profile" | "isAdmin" | "isCollaborator" | "isClient" | "clientId" | "permissions" | "workspaces" | "activeWorkspace"
+  | "profile"
+  | "isAdmin"
+  | "isCollaborator"
+  | "isClient"
+  | "clientId"
+  | "permissions"
+  | "workspaces"
+  | "activeWorkspace"
 >;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -141,7 +150,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       membershipsResult,
       workspaceResult,
     ] as Array<{ error?: { message?: string } | null }>;
-    const networkFailed = results.some((result) => /failed to fetch/i.test(result.error?.message ?? ""));
+    const networkFailed = results.some((result) =>
+      /failed to fetch/i.test(result.error?.message ?? ""),
+    );
     if (networkFailed && restoreOfflineAccess(uid)) return;
     const profileWorkspaceId = activeWorkspaceResult.error
       ? null
@@ -173,7 +184,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         } as WorkspaceMembership;
       })
       .filter(Boolean) as WorkspaceMembership[];
-    setProfile(prof ? ({ ...prof, email: authResult.data.user?.email ?? null } as Profile) : null);
+    const authUser = authResult.data.user;
+    const login =
+      typeof authUser?.app_metadata?.login === "string" ? authUser.app_metadata.login : null;
+    setProfile(prof ? ({ ...prof, email: authUser?.email ?? null, login } as Profile) : null);
     // Admin-only pages are controlled by public.user_roles, not by hardcoded emails.
     const admin = !!roles?.some((r: { role: string }) => r.role === "admin");
     const collaborator = !!roles?.some((r: { role: string }) => r.role === "collaborator");
@@ -187,13 +201,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       "tasks",
       "conversations",
       "obligations",
-      "import_ata",
       "clients",
       "reports",
       "mural",
-      "agenda",
-      "portal_entregas",
-      "portal_financeiro",
       "users",
       "trash",
       "settings",
@@ -213,7 +223,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             (Array.isArray(access?.permissions) ? access.permissions : [])),
     );
     saveOfflineAccess(uid, {
-      profile: prof ? ({ ...prof, email: authResult.data.user?.email ?? null } as Profile) : null,
+      profile: prof ? ({ ...prof, email: authUser?.email ?? null, login } as Profile) : null,
       isAdmin: admin,
       isCollaborator: collaborator,
       isClient: client,
@@ -221,7 +231,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       permissions: admin
         ? systemPermissions
         : (selectedWorkspace?.permissions ??
-            (Array.isArray(access?.permissions) ? access.permissions : [])),
+          (Array.isArray(access?.permissions) ? access.permissions : [])),
       workspaces: memberships,
       activeWorkspace: selectedWorkspace,
     });
@@ -355,6 +365,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         activeWorkspace,
         setActiveWorkspace,
         hasPermission,
+        mustChangePassword: user?.app_metadata?.must_change_password === true,
         loading,
         signOut,
         refreshProfile,

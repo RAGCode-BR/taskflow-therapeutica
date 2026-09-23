@@ -255,8 +255,8 @@ function Settings() {
           <Input id="profile-name" value={name} onChange={(event) => setName(event.target.value)} />
         </div>
         <div className="space-y-2">
-          <Label>E-mail</Label>
-          <Input value={user?.email ?? ""} disabled />
+          <Label>{profile?.login ? "Login" : "E-mail"}</Label>
+          <Input value={profile?.login ?? user?.email ?? ""} disabled />
         </div>
         <Button onClick={save} disabled={saving}>
           {saving ? (
