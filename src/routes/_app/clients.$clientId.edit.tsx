@@ -301,7 +301,7 @@ function EditClientPage() {
 
   const save = async () => {
     if (!client) {
-      toast.error("Cliente nÃ£o encontrado.");
+      toast.error("Cliente não encontrado.");
       return;
     }
     const name = tradeName.trim() || legalName.trim() || client?.name;
@@ -354,7 +354,7 @@ function EditClientPage() {
         payload: { table: "clients", patch },
       });
       queryClient.setQueryData<Client>(["clients", clientId], { ...client, ...patch });
-      toast.success("Cliente salvo neste aparelho. SerÃ¡ sincronizado ao reconectar.");
+      toast.success("Cliente salvo neste aparelho. Será sincronizado ao reconectar.");
       navigate({ to: "/clients" });
       return;
     }

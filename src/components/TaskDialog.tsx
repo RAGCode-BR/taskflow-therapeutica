@@ -881,7 +881,7 @@ export function TaskDialog({
       setSubtasks((current) =>
         current.map((item) => (item.id === st.id ? { ...item, done: !item.done } : item)),
       );
-      toast.success("AlteraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Alteração salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     await supabase.from("subtasks").update({ done: !st.done }).eq("id", st.id);
@@ -897,7 +897,7 @@ export function TaskDialog({
         payload: {},
       });
       setSubtasks((current) => current.filter((item) => item.id !== id));
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     await supabase.from("subtasks").delete().eq("id", id);
@@ -929,7 +929,7 @@ export function TaskDialog({
         current.map((item) => (item.id === subtask.id ? { ...item, title: nextTitle } : item)),
       );
       setEditingSubtaskId((current) => (current === subtask.id ? null : current));
-      toast.success("AlteraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Alteração salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
 
@@ -962,7 +962,7 @@ export function TaskDialog({
         current.map((item) => (item.id === st.id ? { ...item, due_date: next } : item)),
       );
       setSubDueSaving(false);
-      toast.success("Prazo salvo neste aparelho. SerÃ¡ sincronizado ao reconectar.");
+      toast.success("Prazo salvo neste aparelho. Será sincronizado ao reconectar.");
       return true;
     }
     const { error } = await supabase.from("subtasks").update({ due_date: next }).eq("id", st.id);
@@ -1077,7 +1077,7 @@ export function TaskDialog({
         ...prev,
         [st.id]: [...(prev[st.id] ?? []), attachment as SubtaskAttachment],
       }));
-      toast.success("Arquivo salvo neste aparelho. SerÃ¡ enviado ao reconectar.");
+      toast.success("Arquivo salvo neste aparelho. Será enviado ao reconectar.");
       return;
     }
     const { error: upErr } = await supabase.storage.from("task-attachments").upload(path, file);
@@ -1190,7 +1190,7 @@ export function TaskDialog({
         payload: { table: "attachments", bucket: "task-attachments", blob: file, attachment },
       });
       setAttachments((current) => [...current, attachment as Attachment]);
-      toast.success("Arquivo salvo neste aparelho. SerÃ¡ enviado ao reconectar.");
+      toast.success("Arquivo salvo neste aparelho. Será enviado ao reconectar.");
       return true;
     }
     const { error: upErr } = await supabase.storage.from("task-attachments").upload(path, file);

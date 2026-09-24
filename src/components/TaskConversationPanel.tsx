@@ -682,7 +682,7 @@ export function TaskConversationPanel({
           id: crypto.randomUUID(),
           task_id: taskId,
           author_id: user.id,
-          body: "ðŸŽ¤ Ãudio",
+          body: "🎤 Áudio",
           created_at: new Date().toISOString(),
           reply_to_id: null,
           edited_at: null,
@@ -698,7 +698,7 @@ export function TaskConversationPanel({
               blob: audioBlob,
               extension,
               contentType: audioBlob.type || `audio/${extension}`,
-              fileName: `Ãudio ${format(new Date(), "dd/MM HH:mm")}.${extension}`,
+              fileName: `Áudio ${format(new Date(), "dd/MM HH:mm")}.${extension}`,
             },
           },
         });
@@ -709,7 +709,7 @@ export function TaskConversationPanel({
             {
               id: `local-${localComment.id}`,
               comment_id: localComment.id,
-              file_name: "Ãudio",
+              file_name: "Áudio",
               storage_path: "",
               mime_type: audioBlob.type,
               signed_url: localUrl,
@@ -719,7 +719,7 @@ export function TaskConversationPanel({
         setComments((current) => [...current, localComment]);
         clearAudioPreview();
         onActivity?.();
-        toast.success("Ãudio salvo neste aparelho. SerÃ¡ enviado ao reconectar.");
+        toast.success("Áudio salvo neste aparelho. Será enviado ao reconectar.");
         return;
       }
       const { data: comment, error: commentError } = await supabase
@@ -808,7 +808,7 @@ export function TaskConversationPanel({
       );
       setEditingId(null);
       setEditDraft("");
-      toast.success("EdiÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Edição salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { data, error } = await supabase
@@ -834,7 +834,7 @@ export function TaskConversationPanel({
       });
       setComments((current) => current.filter((comment) => comment.id !== id));
       onActivity?.();
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { error } = await supabase.from("comments").delete().eq("id", id);

@@ -2,7 +2,7 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { get, set } from "idb-keyval";
 import { offlineTaskCacheKey } from "@/lib/offline-user-storage";
-import { listOfflineOperations } from "@/lib/offline-sync";
+import { listFailedOfflineOperations, listOfflineOperations } from "@/lib/offline-sync";
 import { overlayPendingTaskOperations } from "@/lib/offline-task-overlay";
 import { createClient } from "@supabase/supabase-js";
 import { supabase } from "@/integrations/supabase/client";
@@ -341,8 +341,15 @@ export function useTasks() {
       // A leitura remota pode terminar antes do sincronizador. Sobrepor a fila
       // evita que um card local suma durante essa pequena janela ou numa falha
       // temporaria de envio.
-      const pendingOperations = await listOfflineOperations(userId);
-      const tasks = overlayPendingTaskOperations(serverTasks, pendingOperations);
+      // Operações em revisão também continuam visíveis até a pessoa decidir.
+      const [pendingOperations, failedOperations] = await Promise.all([
+        listOfflineOperations(userId),
+        listFailedOfflineOperations(userId),
+      ]);
+      const unsynced = [...failedOperations, ...pendingOperations].sort((first, second) =>
+        first.createdAt.localeCompare(second.createdAt),
+      );
+      const tasks = overlayPendingTaskOperations(serverTasks, unsynced);
       await set(offlineKey, tasks);
       return tasks;
     },

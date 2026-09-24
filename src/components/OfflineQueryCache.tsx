@@ -8,6 +8,7 @@ import { createAsyncStoragePersister } from "@tanstack/query-async-storage-persi
 import { del, get, set } from "idb-keyval";
 import { useAuth } from "@/hooks/use-auth";
 import {
+  OFFLINE_CACHE_MAX_AGE,
   OFFLINE_QUERY_CACHE_VERSION,
   offlineQueryCacheKey,
 } from "@/lib/offline-user-storage";
@@ -15,7 +16,7 @@ import {
 // A versão 2 passa a preservar todas as consultas de dados de trabalho já
 // abertas pelo usuário. Isso evita que uma tela fique vazia no modo avião
 // apenas porque sua chave não estava na lista inicial.
-const CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+const CACHE_MAX_AGE = OFFLINE_CACHE_MAX_AGE;
 
 // Agenda e integrações Google deliberadamente ficam fora da primeira etapa offline.
 // Integrações externas e dados financeiros continuam estritamente online.
@@ -74,9 +75,10 @@ export function OfflineQueryCache({ queryClient, children }: Props) {
 
     const persister = createAsyncStoragePersister({
       key,
-      // Não deixe uma janela entre carregar a tela e desligar a rede: cada
-      // resposta bem-sucedida deve ir ao IndexedDB imediatamente.
-      throttleTime: 0,
+      // Gravar no IndexedDB não depende da rede, então um intervalo curto não
+      // abre janela de perda ao desligar a internet. Com 0, o cache inteiro era
+      // serializado a cada evento de consulta, travando telas com muitos cards.
+      throttleTime: 1_000,
       storage: {
         getItem: (itemKey) => get<string>(itemKey),
         setItem: (itemKey, value) => set(itemKey, value),

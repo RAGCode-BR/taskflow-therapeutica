@@ -1,369 +1,185 @@
 import { useCallback, useEffect, useRef } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { createClient } from "@supabase/supabase-js";
 import { useAuth } from "@/hooks/use-auth";
-import { supabase } from "@/integrations/supabase/client";
-import type { Database } from "@/integrations/supabase/types";
-import { taskCreatePayloadForSync } from "@/lib/offline-task-payload";
 import {
-  addOfflineConflict,
   isOffline,
+  listFailedOfflineOperations,
   listOfflineOperations,
+  moveOfflineOperationToFailed,
   removeOfflineOperation,
   replaceOfflineOperation,
   type OfflineOperation,
 } from "@/lib/offline-sync";
+import {
+  MAX_SYNC_ATTEMPTS,
+  SyncBlocker,
+  classifySyncError,
+  retryDelayMs,
+  syncErrorMessage,
+} from "@/lib/offline-sync-policy";
+import {
+  createAuthenticatedSyncClient,
+  syncOperation,
+  type SyncClient,
+} from "@/lib/offline-sync-operations";
 
-type SyncClient = ReturnType<typeof createClient<Database>>;
-
-const sameValue = (first: unknown, second: unknown) => JSON.stringify(first) === JSON.stringify(second);
-const isAlreadyStored = (error: { message?: string } | null) =>
-  !!error && /duplicate|already exists|resource already exists/i.test(error.message ?? "");
-
-async function storeTaskFieldConflicts(operation: OfflineOperation, server: Record<string, unknown>) {
-  const patch = (operation.payload.patch ?? {}) as Record<string, unknown>;
-  const baseValues = operation.baseValues ?? {};
-  const conflictingFields = Object.keys(patch).filter(
-    (field) => !sameValue(server[field], baseValues[field]),
-  );
-
-  await Promise.all(
-    conflictingFields.map((field) =>
-      addOfflineConflict({
-        operationId: operation.id,
-        userId: operation.userId,
-        entity: operation.entity,
-        entityId: operation.entityId,
-        field,
-        serverValue: server[field],
-        localValue: patch[field],
-        serverUpdatedAt: (server.updated_at as string | null | undefined) ?? null,
-      }),
-    ),
-  );
-
-  return conflictingFields;
-}
-
-async function syncTaskUpdate(client: SyncClient, operation: OfflineOperation) {
-  const { data, error } = await client.from("tasks").select("*").eq("id", operation.entityId).single();
-  if (error) throw error;
-  const server = data as Record<string, unknown>;
-  const changedOnServer = operation.baseUpdatedAt && server.updated_at !== operation.baseUpdatedAt;
-  const patch = (operation.payload.patch ?? {}) as Record<string, unknown>;
-
-  if (!changedOnServer) {
-    const { error: updateError } = await (client.from("tasks") as any).update(patch).eq("id", operation.entityId);
-    if (updateError) throw updateError;
-    return false;
+/** Uma aba por vez envia a fila; as outras apenas enfileiram. */
+async function withSyncLock(userId: string, callback: () => Promise<void>) {
+  if (typeof navigator !== "undefined" && navigator.locks) {
+    await navigator.locks.request(
+      `taskflow-offline-sync:${userId}`,
+      { ifAvailable: true },
+      async (lock) => {
+        if (lock) await callback();
+      },
+    );
+    return;
   }
-
-  const conflictingFields = await storeTaskFieldConflicts(operation, server);
-  const safePatch = Object.fromEntries(
-    Object.entries(patch).filter(([field]) => !conflictingFields.includes(field)),
-  );
-  if (Object.keys(safePatch).length > 0) {
-    const { error: updateError } = await (client.from("tasks") as any).update(safePatch).eq("id", operation.entityId);
-    if (updateError) throw updateError;
-  }
-  return conflictingFields.length > 0;
-}
-
-async function syncTaskDelete(client: SyncClient, operation: OfflineOperation) {
-  const { data, error } = await client.from("tasks").select("*").eq("id", operation.entityId).maybeSingle();
-  if (error) throw error;
-  if (!data) return false;
-  const server = data as Record<string, unknown>;
-  if (operation.baseUpdatedAt && server.updated_at !== operation.baseUpdatedAt) {
-    await addOfflineConflict({
-      operationId: operation.id,
-      userId: operation.userId,
-      entity: "task",
-      entityId: operation.entityId,
-      field: "__deleted",
-      serverValue: server,
-      localValue: operation.payload.task,
-      serverUpdatedAt: (server.updated_at as string | null | undefined) ?? null,
-    });
-    return true;
-  }
-  const { error: deleteError } = await client.from("tasks").delete().eq("id", operation.entityId);
-  if (deleteError) throw deleteError;
-  return false;
-}
-
-async function syncOperation(client: SyncClient, operation: OfflineOperation) {
-  if (operation.entity === "task") {
-    if (operation.action === "create") {
-      const taskPayload = taskCreatePayloadForSync(
-        operation.payload.task as Record<string, unknown>,
-      );
-      const { error } = await (client.from("tasks") as any).upsert(taskPayload, {
-        onConflict: "id",
-        ignoreDuplicates: true,
-      });
-      if (error) throw error;
-      return false;
-    }
-    if (operation.action === "update") return syncTaskUpdate(client, operation);
-    return syncTaskDelete(client, operation);
-  }
-
-  if (operation.entity === "subtask") {
-    if (operation.action === "create") {
-      const { error } = await (client.from("subtasks") as any).upsert(operation.payload.subtask, {
-        onConflict: "id",
-        ignoreDuplicates: true,
-      });
-      if (error) throw error;
-      return false;
-    }
-    if (operation.action === "update") {
-      const { error } = await (client.from("subtasks") as any).update(operation.payload.patch).eq("id", operation.entityId);
-      if (error) throw error;
-      return false;
-    }
-    const { error } = await client.from("subtasks").delete().eq("id", operation.entityId);
-    if (error) throw error;
-    return false;
-  }
-
-  if (operation.entity === "comment") {
-    if (operation.action === "create") {
-      const comment = operation.payload.comment as Record<string, unknown>;
-      const { error: commentError } = await (client.from("comments") as any).upsert(comment, {
-        onConflict: "id",
-        ignoreDuplicates: true,
-      });
-      if (commentError) throw commentError;
-      const audio = operation.payload.audio as
-        | { blob: Blob; extension: string; contentType: string; fileName: string }
-        | undefined;
-      if (audio) {
-        const path = `${String(comment.task_id)}/comments/${String(comment.id)}/${String(comment.id)}-audio.${audio.extension}`;
-        const { error: uploadError } = await client.storage
-          .from("task-attachments")
-          .upload(path, audio.blob, { contentType: audio.contentType, upsert: false });
-        if (uploadError && !isAlreadyStored(uploadError)) throw uploadError;
-        const { error: attachmentError } = await (client.from("comment_attachments") as any).upsert({
-          id: comment.id,
-          comment_id: comment.id,
-          task_id: comment.task_id,
-          file_name: audio.fileName,
-          storage_path: path,
-          mime_type: audio.contentType,
-          size_bytes: audio.blob.size,
-          uploaded_by: comment.author_id,
-        }, { onConflict: "id", ignoreDuplicates: true });
-        if (attachmentError) throw attachmentError;
-      }
-      return false;
-    }
-    if (operation.action === "update") {
-      const { error } = await (client.from("comments") as any)
-        .update(operation.payload.patch)
-        .eq("id", operation.entityId);
-      if (error) throw error;
-      return false;
-    }
-    const { error } = await client.from("comments").delete().eq("id", operation.entityId);
-    if (error) throw error;
-    return false;
-  }
-
-  if (operation.entity === "task_order") {
-    const { error } = await client
-      .from("user_task_order")
-      .upsert(operation.payload.rows as any[], { onConflict: "user_id,task_id" });
-    if (error) throw error;
-    return false;
-  }
-
-  if (operation.entity === "record") {
-    const table = operation.payload.table;
-    if (typeof table !== "string") throw new Error("Registro offline invÃ¡lido.");
-    if (operation.action === "create") {
-      const record = operation.payload.record as Record<string, unknown>;
-      const compositeConflict =
-        table === "service_request_participants" ? "request_id,user_id" : undefined;
-      const canRetrySafely = Boolean(operation.payload.upsert || "id" in record || compositeConflict);
-      const request = canRetrySafely
-        ? (client.from(table as any) as any).upsert(record, {
-            onConflict: String(operation.payload.onConflict || compositeConflict || "id"),
-            ignoreDuplicates: !operation.payload.upsert,
-          })
-        : (client.from(table as any) as any).insert(record);
-      const { error } = await request;
-      if (error) throw error;
-      return false;
-    }
-    if (operation.action === "update") {
-      const { error } = await (client.from(table as any) as any)
-        .update(operation.payload.patch)
-        .eq("id", operation.entityId);
-      if (error) throw error;
-      return false;
-    }
-    const { error } = await (client.from(table as any) as any).delete().eq("id", operation.entityId);
-    if (error) throw error;
-    return false;
-  }
-
-  if (operation.entity === "reaction") {
-    const reaction = operation.payload.reaction as Record<string, unknown>;
-    if (operation.action === "delete") {
-      const { error } = await ((client as any).from("mural_post_reactions") as any)
-        .delete().match({ post_id: reaction.post_id, user_id: reaction.user_id, emoji: reaction.emoji });
-      if (error) throw error;
-      return false;
-    }
-    const { error } = await ((client as any).from("mural_post_reactions") as any).insert(reaction);
-    if (error && !String(error.message).toLowerCase().includes("duplicate")) throw error;
-    return false;
-  }
-
-  if (operation.entity === "attachment") {
-    const attachment = operation.payload.attachment as Record<string, unknown>;
-    const bucket = String(operation.payload.bucket);
-    const blob = operation.payload.blob as Blob;
-    const { error: uploadError } = await client.storage.from(bucket).upload(String(attachment.storage_path), blob, {
-      contentType: String(attachment.mime_type || "application/octet-stream"), upsert: false,
-    });
-    if (uploadError && !isAlreadyStored(uploadError)) throw uploadError;
-    if (operation.payload.table === "client_avatar_updates") {
-      const { error } = await (client.from("clients") as any)
-        .update({ avatar_path: attachment.storage_path })
-        .eq("id", attachment.client_id);
-      if (error) throw error;
-      return false;
-    }
-    const { error: insertError } = await (client.from(String(operation.payload.table) as any) as any)
-      .upsert(attachment, { onConflict: "id", ignoreDuplicates: true });
-    if (insertError) throw insertError;
-    return false;
-  }
-
-  throw new Error("Tipo de alteraÃ§Ã£o offline ainda nÃ£o suportado.");
+  await callback();
 }
 
 /** Envia alterações locais quando a conexão volta, sem bloquear a interface. */
-async function createAuthenticatedSyncClient(): Promise<SyncClient> {
-  // Use primeiro a sessao persistida. Forcar refresh em toda reconexao rotaciona
-  // o token sem necessidade e pode oscilar a autenticacao antes de processar a fila.
-  const {
-    data: { session: storedSession },
-  } = await supabase.auth.getSession();
-  let session = storedSession;
-  const expiresSoon = !session?.expires_at || session.expires_at * 1000 <= Date.now() + 30_000;
-
-  if (expiresSoon) {
-    const { data, error } = await supabase.auth.refreshSession();
-    if (error || !data.session?.access_token) {
-      throw error ?? new Error("Não foi possível renovar a sessão para sincronizar os dados offline.");
-    }
-    session = data.session;
-  }
-
-  if (!session?.access_token) {
-    throw new Error("Não foi possível localizar uma sessão para sincronizar os dados offline.");
-  }
-
-  const url = import.meta.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-  const publishableKey =
-    import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY || process.env.SUPABASE_PUBLISHABLE_KEY;
-  if (!url || !publishableKey) {
-    throw new Error("A conexão com o servidor não está configurada.");
-  }
-
-  return createClient<Database>(url, publishableKey, {
-    auth: { persistSession: false, autoRefreshToken: false },
-    global: { headers: { Authorization: `Bearer ${session.access_token}` } },
-  });
-}
-
 export function OfflineSyncManager() {
   const { user } = useAuth();
   const queryClient = useQueryClient();
   const syncing = useRef(false);
+  const rerunRequested = useRef(false);
+  const forceSessionRefresh = useRef(false);
   const warnedFailure = useRef(false);
 
   const sync = useCallback(async () => {
-    if (!user || isOffline() || syncing.current) return;
+    if (!user || isOffline()) return;
+    if (syncing.current) {
+      // A fila mudou durante um envio: repita ao terminar em vez de esperar o intervalo.
+      rerunRequested.current = true;
+      return;
+    }
     syncing.current = true;
+    rerunRequested.current = false;
     let synced = 0;
     let conflicts = 0;
-    let failed = 0;
+    let retrying = 0;
+    let newlyFailed = 0;
     try {
-      const operations = await listOfflineOperations(user.id);
-      if (operations.length === 0) return;
-      let client: SyncClient;
-      try {
-        client = await createAuthenticatedSyncClient();
-      } catch (error) {
-        // A conexão pode voltar alguns instantes antes de o servidor de sessão
-        // estar acessível. Mantemos toda a fila e repetimos automaticamente.
-        console.warn("[offline sync] aguardando uma sessão autenticada:", error);
-        if (!warnedFailure.current) {
-          warnedFailure.current = true;
-          toast.warning("Os dados offline continuam salvos neste aparelho e a sincronização será repetida.");
-        }
-        return;
-      }
-      for (const operation of operations) {
-        if (isOffline()) break;
+      await withSyncLock(user.id, async () => {
+        const operations = await listOfflineOperations(user.id);
+        if (operations.length === 0) return;
+        let client: SyncClient;
         try {
-          const hasConflict = await syncOperation(client, operation);
-          await removeOfflineOperation(user.id, operation.id);
-          synced += 1;
-          if (hasConflict) conflicts += 1;
+          client = await createAuthenticatedSyncClient(forceSessionRefresh.current);
+          forceSessionRefresh.current = false;
         } catch (error) {
-          // Uma operação inválida ou temporariamente recusada não pode prender
-          // toda a fila. Ela permanece guardada para nova tentativa, enquanto
-          // criações posteriores e independentes (como uma tarefa) seguem.
-          await replaceOfflineOperation({ ...operation, attempts: operation.attempts + 1 });
-          failed += 1;
-          console.warn("[offline sync] operação pendente após falha:", operation.entity, operation.action, error);
+          // A conexão pode voltar alguns instantes antes de o servidor de sessão
+          // estar acessível. Mantemos toda a fila e repetimos automaticamente.
+          console.warn("[offline sync] aguardando uma sessão autenticada:", error);
+          if (!warnedFailure.current) {
+            warnedFailure.current = true;
+            toast.warning("Os dados offline continuam salvos neste aparelho e a sincronização será repetida.");
+          }
+          return;
         }
-      }
-      if (failed > 0) {
-        console.warn(`[offline sync] ${failed} operação(ões) permaneceram na fila para nova tentativa.`);
-        if (!warnedFailure.current) {
-          warnedFailure.current = true;
-          toast.warning("Algumas alterações ainda não foram sincronizadas. Elas continuam salvas neste aparelho.");
+
+        // Operações em revisão também seguram as que dependem delas.
+        const blocker = new SyncBlocker();
+        for (const failed of await listFailedOfflineOperations(user.id)) blocker.block(failed);
+
+        for (const operation of operations) {
+          if (isOffline()) break;
+          const waitingRetry =
+            operation.nextAttemptAt && Date.parse(operation.nextAttemptAt) > Date.now();
+          if (waitingRetry || blocker.isBlocked(operation)) {
+            // Preserva a ordem: nada posterior sobre o mesmo registro passa na frente.
+            blocker.block(operation);
+            continue;
+          }
+          try {
+            const hasConflict = await syncOperation(client, operation);
+            await removeOfflineOperation(user.id, operation.id);
+            synced += 1;
+            if (hasConflict) conflicts += 1;
+          } catch (error) {
+            const kind = classifySyncError(error);
+            if (kind === "network" || kind === "auth") {
+              // Não é culpa da operação: mantém tudo e tenta de novo depois.
+              if (kind === "auth") forceSessionRefresh.current = true;
+              console.warn("[offline sync] envio interrompido:", kind, error);
+              break;
+            }
+            blocker.block(operation);
+            const attempts = operation.attempts + 1;
+            const lastError = syncErrorMessage(error);
+            console.warn(
+              "[offline sync] servidor recusou a operação:",
+              operation.entity,
+              operation.action,
+              error,
+            );
+            if (attempts >= MAX_SYNC_ATTEMPTS) {
+              await moveOfflineOperationToFailed({ ...operation, attempts }, lastError);
+              newlyFailed += 1;
+            } else {
+              await replaceOfflineOperation({
+                ...operation,
+                attempts,
+                lastError,
+                nextAttemptAt: new Date(Date.now() + retryDelayMs(attempts)).toISOString(),
+              });
+              retrying += 1;
+            }
+          }
         }
+      });
+
+      if (newlyFailed > 0) {
+        toast.error(
+          newlyFailed === 1
+            ? "Uma alteração feita offline foi recusada pelo servidor e precisa de revisão."
+            : `${newlyFailed} alterações feitas offline foram recusadas pelo servidor e precisam de revisão.`,
+          {
+            action: {
+              label: "Revisar",
+              onClick: () => window.dispatchEvent(new Event("taskflow:offline-failed-open")),
+            },
+          },
+        );
+      } else if (retrying > 0 && !warnedFailure.current) {
+        warnedFailure.current = true;
+        toast.warning("Algumas alterações ainda não foram sincronizadas. Elas continuam salvas neste aparelho.");
       }
       if (synced > 0) {
-        await Promise.all([
-          queryClient.invalidateQueries({ queryKey: ["tasks"] }),
-          queryClient.invalidateQueries({ queryKey: ["subtasks"] }),
-          queryClient.invalidateQueries({ queryKey: ["user_task_order"] }),
-        ]);
+        // A fila alcança várias telas (mural, notas, clientes…): atualize todas.
+        await queryClient.invalidateQueries();
         toast.success(
           conflicts > 0
             ? "Dados sincronizados. Há alterações que precisam de revisão."
             : "Dados offline sincronizados.",
         );
-        if (failed === 0) warnedFailure.current = false;
+        if (retrying === 0 && newlyFailed === 0) warnedFailure.current = false;
         if (conflicts > 0) window.dispatchEvent(new Event("taskflow:offline-conflicts"));
       }
     } finally {
       syncing.current = false;
+      if (rerunRequested.current) window.setTimeout(() => void syncRef.current(), 0);
     }
   }, [queryClient, user]);
 
+  const syncRef = useRef(sync);
+  syncRef.current = sync;
+
   useEffect(() => {
-    void sync();
-    window.addEventListener("online", sync);
-    window.addEventListener("focus", sync);
-    window.addEventListener("taskflow:offline-queue-changed", sync);
+    const run = () => void sync();
+    run();
+    window.addEventListener("online", run);
+    window.addEventListener("focus", run);
+    window.addEventListener("taskflow:offline-queue-changed", run);
     // A opção Offline do DevTools pode voltar a rede sem disparar o evento
     // `online`. A checagem periódica garante que a fila não fique parada.
-    const interval = window.setInterval(() => void sync(), 5_000);
+    const interval = window.setInterval(run, 5_000);
     return () => {
-      window.removeEventListener("online", sync);
-      window.removeEventListener("focus", sync);
-      window.removeEventListener("taskflow:offline-queue-changed", sync);
+      window.removeEventListener("online", run);
+      window.removeEventListener("focus", run);
+      window.removeEventListener("taskflow:offline-queue-changed", run);
       window.clearInterval(interval);
     };
   }, [sync]);

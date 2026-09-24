@@ -582,7 +582,7 @@ function ObligationsPage() {
           item.id === obligation.id ? { ...item, is_active: isActive } : item,
         ),
       );
-      toast.success("AlteraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Alteração salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { error } = await (supabase.from("obligations" as any) as any)
@@ -657,7 +657,7 @@ function ObligationsPage() {
       }
       setDeleting(false);
       setDeleteTarget(null);
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     let error: { message: string } | null = null;

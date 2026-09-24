@@ -359,7 +359,7 @@ export function ClientsIndexPage() {
         qc.setQueryData<Client[]>(["clients"], (current = []) => [...current, client]);
       }
       setOpen(false);
-      toast.success("Cliente salvo neste aparelho. SerÃ¡ sincronizado ao reconectar.");
+      toast.success("Cliente salvo neste aparelho. Será sincronizado ao reconectar.");
       return;
     }
     if (edit) {
@@ -385,7 +385,7 @@ export function ClientsIndexPage() {
       qc.setQueryData<Client[]>(["clients"], (current = []) =>
         current.filter((client) => client.id !== c.id),
       );
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     await supabase.from("clients").delete().eq("id", c.id);
@@ -409,7 +409,7 @@ export function ClientsIndexPage() {
       qc.setQueryData<Client[]>(["clients"], (current = []) =>
         current.map((item) => (item.id === client.id ? { ...item, is_active: isActive } : item)),
       );
-      toast.success("AlteraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Alteração salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { error } = await supabase

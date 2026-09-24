@@ -987,7 +987,7 @@ function KanbanPage() {
           queryClient: qc,
         });
         if (queued)
-          toast.success("MovimentaÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+          toast.success("Movimentação salva neste aparelho. Será sincronizada ao reconectar.");
       } catch (error: any) {
         toast.error(error.message);
       }
@@ -1060,7 +1060,7 @@ function KanbanPage() {
         qc.setQueryData<KanbanColumn[]>(["columns"], (current = []) => [...current, column]);
       }
       setColumnEditor({ open: false, id: null, name: "", color: "#5d6e3e" });
-      toast.success("Coluna salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Coluna salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     if (columnEditor.id) {

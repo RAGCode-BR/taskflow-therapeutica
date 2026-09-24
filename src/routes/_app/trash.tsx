@@ -28,7 +28,7 @@ function TrashPage() {
     if (user && isOffline()) {
       await enqueueOfflineOperation({ userId: user.id, entity: "task", action: "update", entityId: id, payload: { patch: { deleted_at: null, deleted_by: null } } });
       qc.setQueryData<any[]>(["tasks", "deleted"], (current = []) => current.filter((task) => task.id !== id));
-      toast.success("RestauraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Restauração salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { error } = await supabase

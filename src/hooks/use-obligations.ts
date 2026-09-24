@@ -49,6 +49,20 @@ export interface ObligationDepartment {
   updated_at: string;
 }
 
+/** Pauta que toda reunião gerada pela obrigação recebe automaticamente. */
+export interface ObligationTaskTemplate {
+  id: string;
+  obligation_id: string;
+  title: string;
+  description: string | null;
+  assignee_id: string | null;
+  priority: Obligation["priority"] | null;
+  position: number;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface ObligationOccurrence {
   id: string;
   workspace_id: string;
@@ -110,6 +124,23 @@ export function useObligationDepartments() {
         .order("name");
       if (error) throw error;
       return (data ?? []) as ObligationDepartment[];
+    },
+  });
+}
+
+export function useObligationTaskTemplates(obligationId: string | null | undefined) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["obligation-task-templates", obligationId],
+    enabled: !!user && !!obligationId,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("obligation_task_templates" as any) as any)
+        .select("*")
+        .eq("obligation_id", obligationId)
+        .order("position")
+        .order("created_at");
+      if (error) throw error;
+      return (data ?? []) as ObligationTaskTemplate[];
     },
   });
 }

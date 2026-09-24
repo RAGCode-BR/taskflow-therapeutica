@@ -5,7 +5,12 @@ import { useAuth } from "@/hooks/use-auth";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@/components/ui/dialog";
-import { listOfflineConflicts, removeOfflineConflict, type OfflineConflict } from "@/lib/offline-sync";
+import {
+  listOfflineConflicts,
+  removeOfflineConflict,
+  replaceOfflineConflict,
+  type OfflineConflict,
+} from "@/lib/offline-sync";
 
 const fieldNames: Record<string, string> = {
   title: "título",
@@ -51,13 +56,38 @@ export function OfflineConflictDialog() {
     setSaving(true);
     try {
       if (choice === "local" && conflict.field !== "__deleted") {
-        const { error } = await (supabase.from("tasks") as any)
+        // Só grava se a tarefa ainda estiver na versão mostrada neste diálogo.
+        let request = (supabase.from("tasks") as any)
           .update({ [conflict.field]: conflict.localValue })
           .eq("id", conflict.entityId);
+        if (conflict.serverUpdatedAt) request = request.eq("updated_at", conflict.serverUpdatedAt);
+        const { data: written, error } = await request.select("id");
         if (error) throw error;
+        if (!Array.isArray(written) || written.length === 0) {
+          const { data: server, error: readError } = await supabase
+            .from("tasks")
+            .select("*")
+            .eq("id", conflict.entityId)
+            .maybeSingle();
+          if (readError) throw readError;
+          if (!server) throw new Error("A tarefa não está mais disponível.");
+          const row = server as Record<string, unknown>;
+          await replaceOfflineConflict({
+            ...conflict,
+            serverValue: row[conflict.field],
+            serverUpdatedAt: (row.updated_at as string | null | undefined) ?? null,
+          });
+          await load();
+          toast.warning("A tarefa mudou de novo no servidor. Revise o valor atualizado.");
+          return;
+        }
       }
       if (choice === "delete") {
-        const { error } = await supabase.from("tasks").delete().eq("id", conflict.entityId);
+        // Mesma regra do restante do sistema: vai para a lixeira e pode ser restaurada.
+        const { error } = await supabase
+          .from("tasks")
+          .update({ deleted_at: new Date().toISOString(), deleted_by: user.id })
+          .eq("id", conflict.entityId);
         if (error) throw error;
       }
       if (choice === "recover") {
@@ -106,14 +136,14 @@ export function OfflineConflictDialog() {
         )}
         {isDeletion && (
           <p className="rounded-lg border bg-muted/30 p-4 text-sm">
-            A tarefa foi alterada em outro aparelho, mas foi excluída neste. Para evitar perda de dados, escolha se deseja mantê-la, excluí-la mesmo assim ou recuperar uma cópia.
+            A tarefa foi alterada em outro aparelho, mas foi excluída neste. Para evitar perda de dados, escolha se deseja mantê-la, movê-la para a lixeira ou recuperar uma cópia.
           </p>
         )}
         <div className="flex flex-wrap justify-end gap-2">
           {isDeletion ? <>
             <Button variant="outline" disabled={saving} onClick={() => void resolve("server")}>Manter no servidor</Button>
             <Button variant="outline" disabled={saving} onClick={() => void resolve("recover")}>Criar cópia</Button>
-            <Button variant="destructive" disabled={saving} onClick={() => void resolve("delete")}>Excluir mesmo assim</Button>
+            <Button variant="destructive" disabled={saving} onClick={() => void resolve("delete")}>Mover para a lixeira</Button>
           </> : <>
             <Button variant="outline" disabled={saving} onClick={() => void resolve("server")}>Manter servidor</Button>
             <Button disabled={saving} onClick={() => void resolve("local")}>Manter minha alteração</Button>

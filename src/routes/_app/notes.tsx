@@ -344,7 +344,7 @@ export function NotesWorkspace({
     const minPos = notes.reduce((m, n) => Math.min(m, n.position), 0);
     if (isOffline()) {
       const now = new Date().toISOString();
-      const created: ClientNote = { id: crypto.randomUUID(), client_id: clientId, title: "Nova anotaÃ§Ã£o", content: "", content_html: "", done: false, position: minPos - 1, created_at: now, updated_at: now, note_date: today, task_id: null, created_by: user.id };
+      const created: ClientNote = { id: crypto.randomUUID(), client_id: clientId, title: "Nova anotação", content: "", content_html: "", done: false, position: minPos - 1, created_at: now, updated_at: now, note_date: today, task_id: null, created_by: user.id };
       await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "create", entityId: created.id, payload: { table: "client_notes", record: created } });
       setNotes((current) => [created, ...current]);
       setSelectedId(created.id);

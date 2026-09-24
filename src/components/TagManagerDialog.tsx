@@ -39,7 +39,7 @@ export function TagManagerDialog({ open, onOpenChange }: Props) {
       await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "create", entityId: tag.id, payload: { table: "task_tags", record: { ...tag, created_by: user.id } } });
       qc.setQueryData<TaskTag[]>(["task_tags"], (current = []) => [...current, tag]);
       setName("");
-      toast.success("Tag salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Tag salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { error } = await supabase.from("task_tags").insert({
@@ -67,7 +67,7 @@ export function TagManagerDialog({ open, onOpenChange }: Props) {
     if (user && isOffline()) {
       await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "delete", entityId: tag.id, payload: { table: "task_tags" } });
       qc.setQueryData<TaskTag[]>(["task_tags"], (current = []) => current.filter((item) => item.id !== tag.id));
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { error } = await supabase.from("task_tags").delete().eq("id", tag.id);

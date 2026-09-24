@@ -280,7 +280,7 @@ function RequestsPage() {
   const createRequest = useMutation({
     mutationFn: async () => {
       if (user && isOffline()) {
-        if (!form.title.trim()) throw new Error("Informe o assunto da solicitaÃ§Ã£o.");
+        if (!form.title.trim()) throw new Error("Informe o assunto da solicitação.");
         const now = new Date().toISOString();
         const request: Request = { id: crypto.randomUUID(), title: form.title.trim(), description: form.description.trim() || null, status: "new", priority: form.priority, client_id: form.clientId || null, due_date: form.dueDate || null, created_by: user.id, created_at: now, updated_at: now };
         await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "create", entityId: request.id, payload: { table: "service_requests", record: request } });

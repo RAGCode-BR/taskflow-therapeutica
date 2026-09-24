@@ -1,12 +1,13 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase types are regenerated after the migration is applied. */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ChevronDown, Loader2, X } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, Trash2, X } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAssignableProfiles, useClients, useColumns, useTaskStatuses } from "@/hooks/use-data";
 import {
   useObligationDepartments,
+  useObligationTaskTemplates,
   type Obligation,
   type ObligationFrequency,
   type ObligationMonthRule,
@@ -53,6 +54,9 @@ const weekDays = [
 
 const todayValue = () => new Date().toISOString().slice(0, 10);
 
+/** Pauta padrão em edição no formulário; `id` existe apenas para as já salvas. */
+type AgendaDraft = { key: string; id?: string; title: string; assigneeId: string };
+
 export function ObligationDialog({ open, onOpenChange, obligation }: ObligationDialogProps) {
   const queryClient = useQueryClient();
   const { user, activeWorkspace } = useAuth();
@@ -67,6 +71,12 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   const [clientSearch, setClientSearch] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [newDepartmentName, setNewDepartmentName] = useState("");
+  const [departmentOpen, setDepartmentOpen] = useState(false);
+  const [departmentSearch, setDepartmentSearch] = useState("");
+  const [agendaItems, setAgendaItems] = useState<AgendaDraft[]>([]);
+  const [focusAgendaKey, setFocusAgendaKey] = useState<string | null>(null);
+  const agendaLoadedFor = useRef<string | null>(null);
+  const { data: savedTemplates } = useObligationTaskTemplates(open ? obligation?.id : null);
   const [assigneeId, setAssigneeId] = useState("");
   const [frequency, setFrequency] = useState<ObligationFrequency>("monthly");
   const [intervalCount, setIntervalCount] = useState(1);
@@ -107,7 +117,78 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     setColumnId(obligation?.column_id ?? "");
     setStatusId(obligation?.status_id ?? "");
     setIsActive(obligation?.is_active ?? true);
+    setAgendaItems([]);
+    setFocusAgendaKey(null);
+    agendaLoadedFor.current = null;
   }, [open, obligation]);
+
+  // Carrega as pautas salvas uma única vez por abertura, sem sobrescrever edições.
+  useEffect(() => {
+    if (!open || !obligation || !savedTemplates) return;
+    if (agendaLoadedFor.current === obligation.id) return;
+    agendaLoadedFor.current = obligation.id;
+    // As salvas vêm antes de qualquer tarefa já digitada enquanto carregavam.
+    setAgendaItems((current) => [
+      ...savedTemplates.map((template) => ({
+        key: template.id,
+        id: template.id,
+        title: template.title,
+        assigneeId: template.assignee_id ?? "",
+      })),
+      ...current,
+    ]);
+  }, [open, obligation, savedTemplates]);
+
+  const addAgendaItem = () => {
+    const key = crypto.randomUUID();
+    setAgendaItems((current) => [...current, { key, title: "", assigneeId: "" }]);
+    setFocusAgendaKey(key);
+  };
+
+  const updateAgendaItem = (key: string, patch: Partial<AgendaDraft>) => {
+    setAgendaItems((current) =>
+      current.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const removeAgendaItem = (key: string) => {
+    setAgendaItems((current) => current.filter((item) => item.key !== key));
+  };
+
+  /** Linhas a gravar em obligation_task_templates, na ordem da lista. */
+  const agendaRowsFor = (obligationId: string, reuseIds: boolean) =>
+    agendaItems
+      .filter((item) => item.title.trim())
+      .map((item, position) => ({
+        id: reuseIds && item.id ? item.id : crypto.randomUUID(),
+        obligation_id: obligationId,
+        title: item.title.trim(),
+        assignee_id: item.assigneeId || null,
+        position,
+      }));
+
+  const removedTemplateIds = () => {
+    const keptIds = new Set(agendaItems.filter((item) => item.title.trim()).map((item) => item.id));
+    return (savedTemplates ?? [])
+      .map((template) => template.id)
+      .filter((id) => !keptIds.has(id));
+  };
+
+  const saveAgendaTemplates = async (obligationIds: string[]) => {
+    const removed = obligation ? removedTemplateIds() : [];
+    if (removed.length > 0) {
+      const { error } = await (supabase.from("obligation_task_templates" as any) as any)
+        .delete()
+        .in("id", removed);
+      if (error) return error;
+    }
+    const rows = obligationIds.flatMap((id) => agendaRowsFor(id, Boolean(obligation)));
+    if (rows.length === 0) return null;
+    const { error } = await (supabase.from("obligation_task_templates" as any) as any).upsert(rows, {
+      onConflict: "id",
+    });
+    return error;
+  };
 
   const parsedMonthDays = useMemo(
     () =>
@@ -168,6 +249,30 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
         : `Último dia útil a cada ${intervalCount} meses`;
     return `${intervalCount === 1 ? "Todo mês" : `${every} meses`}: dia${parsedMonthDays.length > 1 ? "s" : ""} ${parsedMonthDays.join(" e ") || "—"}`;
   }, [businessDaysOnly, daysOfWeek, frequency, intervalCount, monthRule, parsedMonthDays]);
+
+  const departmentSearchTerm = departmentSearch.trim();
+  const normalizedDepartmentSearch = departmentSearchTerm.toLocaleLowerCase("pt-BR");
+  const filteredDepartments = departments.filter((department) =>
+    department.name.toLocaleLowerCase("pt-BR").includes(normalizedDepartmentSearch),
+  );
+  const exactDepartment = departments.find(
+    (department) => department.name.toLocaleLowerCase("pt-BR") === normalizedDepartmentSearch,
+  );
+  const selectedDepartmentName =
+    departments.find((department) => department.id === departmentId)?.name ?? newDepartmentName;
+
+  const chooseDepartment = (id: string) => {
+    setDepartmentId(id);
+    setNewDepartmentName("");
+    setDepartmentOpen(false);
+  };
+
+  // O departamento só é gravado ao salvar a obrigação, junto com ela.
+  const createDepartmentOption = () => {
+    setDepartmentId("");
+    setNewDepartmentName(departmentSearchTerm);
+    setDepartmentOpen(false);
+  };
 
   const save = async () => {
     if (!title.trim()) return toast.error("Informe o nome da obrigação.");
@@ -263,6 +368,25 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
           }),
         ),
       );
+      // Depois das obrigações: a fila só envia a pauta quando a obrigação existir.
+      for (const removedId of obligation ? removedTemplateIds() : []) {
+        await enqueueOfflineOperation({
+          userId: user.id,
+          entity: "record",
+          action: "delete",
+          entityId: removedId,
+          payload: { table: "obligation_task_templates" },
+        });
+      }
+      for (const row of localItems.flatMap((item) => agendaRowsFor(item.id, Boolean(obligation)))) {
+        await enqueueOfflineOperation({
+          userId: user.id,
+          entity: "record",
+          action: "create",
+          entityId: row.id,
+          payload: { table: "obligation_task_templates", record: row, upsert: true },
+        });
+      }
       queryClient.setQueryData<Obligation[]>(["obligations", activeWorkspace.id], (current = []) =>
         obligation
           ? current.map((item) => (item.id === obligation.id ? localItems[0] : item))
@@ -270,7 +394,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       );
       setSaving(false);
       toast.success(
-        "ObrigaÃ§Ã£o salva neste aparelho. Os prÃ³ximos prazos serÃ£o gerados ao reconectar.",
+        "Obrigação salva neste aparelho. Os próximos prazos serão gerados ao reconectar.",
       );
       onOpenChange(false);
       return;
@@ -297,6 +421,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     }
 
     const savedObligations = (data ?? []) as Array<{ id: string }>;
+    // As pautas precisam existir antes de gerar as reuniões, que já nascem com elas.
+    const agendaError = await saveAgendaTemplates(savedObligations.map(({ id }) => id));
     const refreshResults = await Promise.all(
       savedObligations.map(({ id }) =>
         (supabase as any).rpc("refresh_obligation", { target_obligation_id: id }),
@@ -307,8 +433,13 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["obligations"] }),
       queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-task-templates"] }),
       queryClient.invalidateQueries({ queryKey: ["tasks"] }),
     ]);
+    if (agendaError) {
+      toast.error(`Obrigação salva, mas as tarefas das reuniões não foram salvas: ${agendaError.message}`);
+      return;
+    }
     if (refreshError) {
       toast.error(
         `Obrigação salva, mas alguns próximos prazos não foram gerados: ${refreshError.message}`,
@@ -347,33 +478,87 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-2">
                 <Label>Departamento *</Label>
-                <Select
-                  value={departmentId || (newDepartmentName ? "new" : "none")}
-                  onValueChange={(value) => {
-                    setDepartmentId(value === "none" || value === "new" ? "" : value);
-                    if (value !== "new") setNewDepartmentName("");
+                <Popover
+                  open={departmentOpen}
+                  onOpenChange={(open) => {
+                    setDepartmentOpen(open);
+                    if (open) setDepartmentSearch("");
                   }}
                 >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Selecione o departamento" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Selecione o departamento</SelectItem>
-                    {departments.map((department) => (
-                      <SelectItem key={department.id} value={department.id}>
-                        {department.name}
-                      </SelectItem>
-                    ))}
-                    <SelectItem value="new">+ Criar novo departamento</SelectItem>
-                  </SelectContent>
-                </Select>
-                {!departmentId && (
-                  <Input
-                    value={newDepartmentName}
-                    onChange={(event) => setNewDepartmentName(event.target.value)}
-                    placeholder="Nome do novo departamento"
-                  />
-                )}
+                  <PopoverTrigger asChild>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full justify-between font-normal"
+                    >
+                      {selectedDepartmentName ? (
+                        <span className="flex min-w-0 items-center gap-2">
+                          <span className="truncate">{selectedDepartmentName}</span>
+                          {!departmentId && (
+                            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                              novo
+                            </span>
+                          )}
+                        </span>
+                      ) : (
+                        <span className="truncate text-muted-foreground">
+                          Selecione ou crie um departamento
+                        </span>
+                      )}
+                      <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent
+                    align="start"
+                    className="w-[var(--radix-popover-trigger-width)] p-2"
+                  >
+                    <Input
+                      value={departmentSearch}
+                      onChange={(event) => setDepartmentSearch(event.target.value)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        if (exactDepartment) chooseDepartment(exactDepartment.id);
+                        else if (departmentSearchTerm) createDepartmentOption();
+                        else if (filteredDepartments.length === 1)
+                          chooseDepartment(filteredDepartments[0].id);
+                      }}
+                      placeholder="Buscar ou digitar um novo departamento..."
+                      className="mb-2 h-8"
+                      autoFocus
+                    />
+                    <div className="max-h-56 overflow-y-auto">
+                      {newDepartmentName && !departmentSearchTerm && (
+                        <DepartmentOption selected label={newDepartmentName} tag="novo" />
+                      )}
+                      {filteredDepartments.map((department) => (
+                        <DepartmentOption
+                          key={department.id}
+                          label={department.name}
+                          selected={department.id === departmentId}
+                          onSelect={() => chooseDepartment(department.id)}
+                        />
+                      ))}
+                      {departmentSearchTerm && !exactDepartment && (
+                        <button
+                          type="button"
+                          onClick={createDepartmentOption}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-primary hover:bg-accent"
+                        >
+                          <Plus className="h-4 w-4 shrink-0" />
+                          <span className="truncate">
+                            Criar departamento “{departmentSearchTerm}”
+                          </span>
+                        </button>
+                      )}
+                      {!departmentSearchTerm && departments.length === 0 && !newDepartmentName && (
+                        <p className="px-2 py-3 text-center text-sm text-muted-foreground">
+                          Nenhum departamento ainda. Digite um nome para criar o primeiro.
+                        </p>
+                      )}
+                    </div>
+                  </PopoverContent>
+                </Popover>
               </div>
               <div className="space-y-2">
                 <Label>{obligation ? "Cliente vinculado" : "Clientes vinculados"}</Label>
@@ -515,6 +700,90 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                 placeholder="Documentos necessários, forma de entrega, conferências..."
               />
             </div>
+          </section>
+
+          <section className="space-y-3 rounded-xl border bg-muted/20 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-medium">Tarefas de cada reunião</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Toda reunião gerada já nasce com estas tarefas. Você ainda pode incluir pautas
+                  extras em cada reunião.
+                </p>
+              </div>
+              {agendaItems.length > 0 && (
+                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                  {agendaItems.length} {agendaItems.length === 1 ? "tarefa" : "tarefas"}
+                </span>
+              )}
+            </div>
+            {agendaItems.length === 0 ? (
+              <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
+                Nenhuma tarefa padrão. As pautas serão criadas manualmente em cada reunião.
+              </p>
+            ) : (
+              <ol className="space-y-2">
+                {agendaItems.map((item, index) => (
+                  <li key={item.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <span className="hidden w-6 shrink-0 text-right text-sm text-muted-foreground sm:block">
+                      {index + 1}.
+                    </span>
+                    <Input
+                      value={item.title}
+                      onChange={(event) => updateAgendaItem(item.key, { title: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        if (item.title.trim()) addAgendaItem();
+                      }}
+                      placeholder="Ex.: Conferir folha de pagamento"
+                      aria-label={`Tarefa ${index + 1}`}
+                      autoFocus={item.key === focusAgendaKey}
+                      className="flex-1"
+                    />
+                    <div className="flex gap-2">
+                      <Select
+                        value={item.assigneeId || "default"}
+                        onValueChange={(value) =>
+                          updateAgendaItem(item.key, { assigneeId: value === "default" ? "" : value })
+                        }
+                      >
+                        <SelectTrigger className="sm:w-52" aria-label={`Responsável da tarefa ${index + 1}`}>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="default">Responsável da reunião</SelectItem>
+                          {profiles.map((profile) => (
+                            <SelectItem key={profile.id} value={profile.id}>
+                              {profile.full_name || profile.email}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeAgendaItem(item.key)}
+                        aria-label={`Remover tarefa ${index + 1}`}
+                        title="Remover tarefa"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full border-dashed"
+              onClick={addAgendaItem}
+            >
+              <Plus className="mr-1.5 h-4 w-4" /> Adicionar tarefa
+            </Button>
           </section>
 
           <section className="space-y-4 rounded-xl border bg-muted/20 p-4">
@@ -767,5 +1036,36 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
         </DialogFooter>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function DepartmentOption({
+  label,
+  selected,
+  tag,
+  onSelect,
+}: {
+  label: string;
+  selected: boolean;
+  tag?: string;
+  onSelect?: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn(
+        "flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent",
+        selected && "bg-accent/60 font-medium",
+      )}
+    >
+      <Check className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
+      <span className="truncate">{label}</span>
+      {tag && (
+        <span className="ml-auto shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+          {tag}
+        </span>
+      )}
+    </button>
   );
 }

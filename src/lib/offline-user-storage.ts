@@ -3,6 +3,9 @@ import { clearOfflineSyncData } from "@/lib/offline-sync";
 
 export const OFFLINE_QUERY_CACHE_VERSION = "offline-cache-v2";
 
+/** Por quanto tempo os dados já vistos continuam disponíveis sem internet. */
+export const OFFLINE_CACHE_MAX_AGE = 7 * 24 * 60 * 60 * 1000;
+
 export function offlineQueryCacheKey(userId: string) {
   return `taskflow-query-cache:${OFFLINE_QUERY_CACHE_VERSION}:${userId}`;
 }

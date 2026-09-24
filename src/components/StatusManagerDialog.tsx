@@ -39,7 +39,7 @@ export function StatusManagerDialog({ open, onOpenChange }: Props) {
       await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "create", entityId: status.id, payload: { table: "task_statuses", record: { ...status, created_by: user.id } } });
       qc.setQueryData<TaskStatus[]>(["task_statuses"], (current = []) => [...current, status]);
       setName(""); setIsActive(false);
-      toast.success("Status salvo neste aparelho. SerÃ¡ sincronizado ao reconectar.");
+      toast.success("Status salvo neste aparelho. Será sincronizado ao reconectar.");
       return;
     }
     const { error } = await supabase.from("task_statuses").insert({
@@ -74,7 +74,7 @@ export function StatusManagerDialog({ open, onOpenChange }: Props) {
     if (user && isOffline()) {
       await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "delete", entityId: s.id, payload: { table: "task_statuses" } });
       qc.setQueryData<TaskStatus[]>(["task_statuses"], (current = []) => current.filter((item) => item.id !== s.id));
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     const { error } = await supabase.from("task_statuses").delete().eq("id", s.id);

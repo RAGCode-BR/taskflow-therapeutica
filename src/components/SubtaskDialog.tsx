@@ -141,7 +141,7 @@ export function SubtaskDialog({
       });
       setSaving(false);
       onSaved(local as EditableSubtask);
-      toast.success("Subtarefa salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Subtarefa salva neste aparelho. Será sincronizada ao reconectar.");
       onOpenChange(false);
       return;
     }

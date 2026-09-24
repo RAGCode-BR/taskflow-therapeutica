@@ -81,7 +81,7 @@ export function ClientNotesSheet({ open, onOpenChange, initialClientId, embedded
     if (!clientId || !user) return;
     if (isOffline()) {
       const now = new Date().toISOString();
-      const note: ClientNote = { id: crypto.randomUUID(), client_id: clientId, title: "Nova anotaÃ§Ã£o", content: "", done: false, position: 0, created_at: now, updated_at: now };
+      const note: ClientNote = { id: crypto.randomUUID(), client_id: clientId, title: "Nova anotação", content: "", done: false, position: 0, created_at: now, updated_at: now };
       await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "create", entityId: note.id, payload: { table: "client_notes", record: { ...note, created_by: user.id } } });
       setNotes((current) => [note, ...current]);
       return;

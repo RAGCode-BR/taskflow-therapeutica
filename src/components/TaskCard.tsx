@@ -491,7 +491,7 @@ export function TaskCard({
     try {
       const { queued } = await updateTaskWithOfflineSupport({ userId: user.id, task, patch, queryClient: qc });
       if (queued) {
-        toast.success("AlteraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+        toast.success("Alteração salva neste aparelho. Será sincronizada ao reconectar.");
         return;
       }
       void qc.invalidateQueries({ queryKey: ["tasks"] });
@@ -567,7 +567,7 @@ export function TaskCard({
       const attachment: Attachment = { id: crypto.randomUUID(), task_id: task.id, file_name: file.name, storage_path: path, mime_type: contentType, size_bytes: file.size, created_at: new Date().toISOString() };
       await enqueueOfflineOperation({ userId: user.id, entity: "attachment", action: "create", entityId: attachment.id, payload: { table: "attachments", bucket: "task-attachments", blob: file, attachment: { ...attachment, uploaded_by: user.id } } });
       setAttachments((current) => [...current, attachment]);
-      toast.success("Arquivo salvo neste aparelho. SerÃ¡ enviado ao reconectar.");
+      toast.success("Arquivo salvo neste aparelho. Será enviado ao reconectar.");
       return true;
     }
     const { error: upErr } = await supabase.storage
@@ -657,7 +657,7 @@ export function TaskCard({
     if (user && isOffline()) {
       await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "delete", entityId: a.id, payload: { table: "attachments" } });
       setAttachments((current) => current.filter((item) => item.id !== a.id));
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     try {

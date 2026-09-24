@@ -216,7 +216,7 @@ export function InlineTaskEditor({
 
     toast.success("Alterações salvas");
     if (queued) {
-      toast.success("AlteraÃ§Ã£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Alteração salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     void qc.invalidateQueries({ queryKey: ["tasks"] });
@@ -285,7 +285,7 @@ export function InlineTaskEditor({
         payload: { table: "attachments", bucket: "task-attachments", blob: file, attachment },
       });
       setAttachments((current) => [...current, attachment]);
-      toast.success("Arquivo salvo neste aparelho. SerÃ¡ enviado ao reconectar.");
+      toast.success("Arquivo salvo neste aparelho. Será enviado ao reconectar.");
       return;
     }
 
@@ -404,7 +404,7 @@ export function InlineTaskEditor({
         payload: { table: "attachments" },
       });
       setAttachments((current) => current.filter((item) => item.id !== attachment.id));
-      toast.success("ExclusÃ£o salva neste aparelho. SerÃ¡ sincronizada ao reconectar.");
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
       return;
     }
     if (attachment.mime_type !== LINK_MIME) {

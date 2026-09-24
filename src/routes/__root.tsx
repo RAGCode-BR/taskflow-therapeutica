@@ -6,6 +6,7 @@ import { AuthProvider } from "@/hooks/use-auth";
 import { OfflineQueryCache } from "@/components/OfflineQueryCache";
 import { OfflineSyncManager } from "@/components/OfflineSyncManager";
 import { OfflineConflictDialog } from "@/components/OfflineConflictDialog";
+import { OfflineFailedOperationsDialog } from "@/components/OfflineFailedOperationsDialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
@@ -101,6 +102,7 @@ function RootComponent() {
         <OfflineQueryCache queryClient={queryClient}>
           <OfflineSyncManager />
           <OfflineConflictDialog />
+          <OfflineFailedOperationsDialog />
           <TooltipProvider>
             {isGitHubPages ? <HeadContent /> : null}
             <Outlet />
