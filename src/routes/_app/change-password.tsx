@@ -36,8 +36,17 @@ function ChangePasswordPage() {
       if (completionError) throw completionError;
       if (data?.error) throw new Error(data.error);
 
-      const { error: refreshError } = await supabase.auth.refreshSession();
-      if (refreshError) throw refreshError;
+      const accessToken = data?.session?.access_token;
+      const refreshToken = data?.session?.refresh_token;
+      if (typeof accessToken !== "string" || typeof refreshToken !== "string") {
+        throw new Error("A nova sessão não foi recebida. Entre novamente com a senha definitiva.");
+      }
+
+      const { error: sessionError } = await supabase.auth.setSession({
+        access_token: accessToken,
+        refresh_token: refreshToken,
+      });
+      if (sessionError) throw sessionError;
       toast.success("Senha definitiva criada com sucesso.");
       navigate({ to: "/mural", replace: true });
     } catch (error) {

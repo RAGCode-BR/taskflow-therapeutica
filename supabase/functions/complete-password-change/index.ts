@@ -58,7 +58,36 @@ Deno.serve(async (request) => {
     });
     if (updateError) throw updateError;
 
-    return response({ ok: true });
+    // Updating a password through the Admin API revokes the refresh token from
+    // the temporary-password session. Create a replacement session immediately
+    // so the browser never tries to refresh a token that no longer exists.
+    const replacementClient = createClient(projectUrl, anonKey, {
+      auth: { autoRefreshToken: false, persistSession: false },
+    });
+    const { data: replacement, error: replacementError } =
+      await replacementClient.auth.signInWithPassword({
+        email: data.user.email,
+        password,
+      });
+    if (replacementError || !replacement.session) {
+      console.error("Password changed, but replacement session creation failed", replacementError);
+      return response(
+        {
+          error:
+            "A senha foi alterada, mas a nova sessão não pôde ser criada. Entre novamente com a senha definitiva.",
+          password_changed: true,
+        },
+        409,
+      );
+    }
+
+    return response({
+      ok: true,
+      session: {
+        access_token: replacement.session.access_token,
+        refresh_token: replacement.session.refresh_token,
+      },
+    });
   } catch (error) {
     console.error(error);
     return response({
