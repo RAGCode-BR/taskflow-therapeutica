@@ -17,7 +17,6 @@ import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   useTasks,
-  useClients,
   useColumns,
   useSubtasks,
   useTaskCollaborators,
@@ -40,13 +39,14 @@ import {
 import { normalizeTasksWithOpenSubtasks } from "@/lib/task-utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 
+const TASK_BACKGROUND_COLOR = "#475569";
+
 export const Route = createFileRoute("/_app/tasks/calendar")({
   component: CalendarPage,
 });
 
 function CalendarPage() {
   const { data: tasks = [] } = useTasks();
-  const { data: clients = [] } = useClients();
   const { data: columns = [] } = useColumns();
   const { data: subtasks = [] } = useSubtasks();
   const { data: statuses = [] } = useTaskStatuses();
@@ -172,10 +172,6 @@ function CalendarPage() {
     () => new Map(profiles.map((profile) => [profile.id, profile])),
     [profiles],
   );
-  const clientById = useMemo(
-    () => new Map(clients.map((client) => [client.id, client])),
-    [clients],
-  );
 
   const dayTasks = (day: Date) =>
     visible.filter((t) => {
@@ -250,7 +246,6 @@ function CalendarPage() {
                     const status = statusById.get(t.status_id ?? "");
                     const assignee = profileById.get(t.assignee_id ?? "") ?? null;
                     const statusColor = status?.color || "#64748b";
-                    const clientColor = clientById.get(t.client_id ?? "")?.color || "#475569";
                     return (
                       <CalendarTaskItem
                         key={t.id}
@@ -258,7 +253,7 @@ function CalendarPage() {
                         assignee={assignee}
                         statusName={status?.name ?? stageNameByTaskId.get(t.id) ?? "A fazer"}
                         statusColor={statusColor}
-                        backgroundColor={clientColor}
+                        backgroundColor={TASK_BACKGROUND_COLOR}
                         onClick={() => {
                           setEdit(t);
                           setOpen(true);
@@ -298,8 +293,6 @@ function CalendarPage() {
             {selectedDayTasks.map((task) => {
               const status = statusById.get(task.status_id ?? "");
               const assignee = profileById.get(task.assignee_id ?? "") ?? null;
-              const clientColor =
-                clientById.get(task.client_id ?? "")?.color || "#475569";
               return (
                 <CalendarTaskItem
                   key={task.id}
@@ -307,7 +300,7 @@ function CalendarPage() {
                   assignee={assignee}
                   statusName={status?.name ?? stageNameByTaskId.get(task.id) ?? "A fazer"}
                   statusColor={status?.color || "#64748b"}
-                  backgroundColor={clientColor}
+                  backgroundColor={TASK_BACKGROUND_COLOR}
                   expanded
                   onClick={() => {
                     setDayListOpen(false);

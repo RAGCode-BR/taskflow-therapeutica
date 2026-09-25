@@ -54,6 +54,11 @@ export const Route = createFileRoute("/_app/mural")({
 });
 
 type ChecklistItem = { text: string; done: boolean };
+
+/** Recado cuja validade já passou: sai do quadro, mas continua acessível em "Vencidos". */
+function isExpiredPost(post: { expires_at: string | null }) {
+  return !!post.expires_at && new Date(`${post.expires_at}T23:59:59`) < new Date();
+}
 type MuralPost = {
   id: string;
   title: string;
@@ -205,7 +210,9 @@ function MuralPage() {
   const [open, setOpen] = useState(false);
   const [form, setForm] = useState(emptyForm);
   const [editingPost, setEditingPost] = useState<MuralPost | null>(null);
-  const [postFilter, setPostFilter] = useState<"all" | "pinned" | "open" | "completed">("all");
+  const [postFilter, setPostFilter] = useState<
+    "all" | "pinned" | "open" | "completed" | "expired"
+  >("all");
   const [draggingId, setDraggingId] = useState<string | null>(null);
   const [frontCardId, setFrontCardId] = useState<string | null>(null);
   const [draftPositions, setDraftPositions] = useState<Record<string, { x: number; y: number }>>(
@@ -549,10 +556,11 @@ function MuralPage() {
   const orderedPosts = useMemo(() => {
     return posts
       .filter((post) => {
-        if (post.expires_at && new Date(`${post.expires_at}T23:59:59`) < new Date()) return false;
-        if (postFilter === "pinned") return post.is_pinned;
-        if (postFilter === "open") return !post.completed_at;
+        // Concluídos é o histórico: mostra também os que já venceram.
         if (postFilter === "completed") return !!post.completed_at;
+        if (postFilter === "expired") return isExpiredPost(post) && !post.completed_at;
+        if (isExpiredPost(post)) return false;
+        if (postFilter === "pinned") return post.is_pinned && !post.completed_at;
         return !post.completed_at;
       })
       .sort((a, b) => {
@@ -561,6 +569,17 @@ function MuralPage() {
         return new Date(b.created_at).getTime() - new Date(a.created_at).getTime();
       });
   }, [posts, postFilter]);
+  // Os contadores usam as mesmas regras dos filtros para nunca divergir da lista.
+  const postCounts = useMemo(() => {
+    const active = posts.filter((post) => !post.completed_at);
+    return {
+      open: active.filter((post) => !isExpiredPost(post)).length,
+      pinned: active.filter((post) => post.is_pinned && !isExpiredPost(post)).length,
+      expired: active.filter(isExpiredPost).length,
+      completed: posts.length - active.length,
+    };
+  }, [posts]);
+
   const openNewPost = () => {
     setEditingPost(null);
     setForm(emptyForm);
@@ -1031,12 +1050,12 @@ function MuralPage() {
         {[
           {
             label: "Recados em aberto",
-            value: posts.filter((post) => !post.completed_at).length,
+            value: postCounts.open,
             tone: "bg-[#fff0cf] text-[#3d3d32]",
           },
           {
             label: "Recados fixados",
-            value: posts.filter((post) => post.is_pinned && !post.completed_at).length,
+            value: postCounts.pinned,
             tone: "bg-[#dff2fa] text-[#304248]",
           },
           {
@@ -1046,7 +1065,7 @@ function MuralPage() {
           },
           {
             label: "Recados concluídos",
-            value: posts.filter((post) => !!post.completed_at).length,
+            value: postCounts.completed,
             tone: "bg-[#f8e1ef] text-[#493742]",
           },
         ].map((metric) => (
@@ -1074,6 +1093,9 @@ function MuralPage() {
               ["pinned", "Fixados"],
               ["open", "Em aberto"],
               ["completed", "Concluídos"],
+              ...(postCounts.expired > 0 || postFilter === "expired"
+                ? ([["expired", `Vencidos (${postCounts.expired})`]] as const)
+                : []),
             ] as const
           ).map(([value, label]) => (
             <button
@@ -1104,7 +1126,9 @@ function MuralPage() {
             <p className="mt-1 text-sm text-[#747a74]">
               {postFilter === "all"
                 ? "Publique o primeiro recado para compartilhar uma ideia ou comunicado."
-                : "Use os filtros acima para navegar entre os outros recados."}
+                : postFilter === "expired"
+                  ? "Nenhum recado vencido em aberto."
+                  : "Use os filtros acima para navegar entre os outros recados."}
             </p>
           </div>
         </div>
@@ -1241,6 +1265,12 @@ function MuralPage() {
                   {post.is_pinned && (
                     <span className="mt-3 inline-flex items-center gap-1 rounded-full bg-white/50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide">
                       <Pin className="h-3 w-3" /> Fixado à frente
+                    </span>
+                  )}
+                  {isExpiredPost(post) && (
+                    <span className="ml-1 mt-3 inline-flex items-center rounded-full bg-white/50 px-2 py-1 text-[10px] font-bold uppercase tracking-wide text-destructive">
+                      Venceu em{" "}
+                      {new Date(`${post.expires_at}T12:00:00`).toLocaleDateString("pt-BR")}
                     </span>
                   )}
                   {post.content && (

@@ -17,7 +17,6 @@ type RoomTask = {
   deleted_at: string | null;
   assignee_id: string | null;
   created_by: string | null;
-  client_id: string | null;
   conversation_closed_at: string | null;
 };
 type Message = {
@@ -71,7 +70,7 @@ export function useTaskConversations() {
     queryFn: async () => {
       const { data, error } = await (supabase.from("tasks") as any)
         .select(
-          "id, title, completed_at, status, deleted_at, assignee_id, created_by, client_id, conversation_closed_at",
+          "id, title, completed_at, status, deleted_at, assignee_id, created_by, conversation_closed_at",
         )
         .in("id", taskIds);
       if (error) throw error;

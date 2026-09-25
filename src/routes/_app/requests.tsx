@@ -17,7 +17,7 @@ import {
 } from "lucide-react";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
-import { useAssignableProfiles, useClients, useProfiles } from "@/hooks/use-data";
+import { useAssignableProfiles, useProfiles } from "@/hooks/use-data";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -64,7 +64,6 @@ type Request = {
   description: string | null;
   status: Status;
   priority: string;
-  client_id: string | null;
   due_date: string | null;
   created_by: string;
   created_at: string;
@@ -112,11 +111,9 @@ function RequestsPage() {
   const { user, isAdmin } = useAuth();
   const { data: profiles = [] } = useProfiles();
   const { data: mentionProfiles = [] } = useAssignableProfiles();
-  const { data: clients = [] } = useClients();
   const qc = useQueryClient();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [statusFilters, setStatusFilters] = useState<Status[]>([]);
-  const [clientFilter, setClientFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -125,7 +122,6 @@ function RequestsPage() {
   const [form, setForm] = useState({
     title: "",
     description: "",
-    clientId: "",
     priority: "medium",
     dueDate: "",
   });
@@ -282,7 +278,7 @@ function RequestsPage() {
       if (user && isOffline()) {
         if (!form.title.trim()) throw new Error("Informe o assunto da solicitação.");
         const now = new Date().toISOString();
-        const request: Request = { id: crypto.randomUUID(), title: form.title.trim(), description: form.description.trim() || null, status: "new", priority: form.priority, client_id: form.clientId || null, due_date: form.dueDate || null, created_by: user.id, created_at: now, updated_at: now };
+        const request: Request = { id: crypto.randomUUID(), title: form.title.trim(), description: form.description.trim() || null, status: "new", priority: form.priority, due_date: form.dueDate || null, created_by: user.id, created_at: now, updated_at: now };
         await enqueueOfflineOperation({ userId: user.id, entity: "record", action: "create", entityId: request.id, payload: { table: "service_requests", record: request } });
         await Promise.all(selectedParticipants.map((participantId) => enqueueOfflineOperation({ userId: user.id, entity: "record", action: "create", entityId: crypto.randomUUID(), payload: { table: "service_request_participants", record: { request_id: request.id, user_id: participantId, added_by: user.id } } })));
         qc.setQueryData<Request[]>(["service_requests"], (current = []) => [...current, request]);
@@ -292,7 +288,6 @@ function RequestsPage() {
       const { data: requestId, error } = await (supabase.rpc as any)("create_service_request", {
         p_title: form.title.trim(),
         p_description: form.description.trim() || null,
-        p_client_id: form.clientId || null,
         p_priority: form.priority,
         p_due_date: form.dueDate || null,
         p_participant_ids: selectedParticipants,
@@ -305,7 +300,7 @@ function RequestsPage() {
       refresh();
       setSelectedId(request.id);
       setDialogOpen(false);
-      setForm({ title: "", description: "", clientId: "", priority: "medium", dueDate: "" });
+      setForm({ title: "", description: "", priority: "medium", dueDate: "" });
       setSelectedParticipants([]);
       toast.success("Solicitação criada.");
     },
@@ -440,14 +435,11 @@ function RequestsPage() {
   const filtered = requests.filter(
     (request) =>
       (statusFilters.length === 0 || statusFilters.includes(request.status)) &&
-      (clientFilter === "all" || request.client_id === clientFilter) &&
       (assigneeFilter === "all" ||
         allAssignees.some(
           (assignee) => assignee.request_id === request.id && assignee.user_id === assigneeFilter,
         )) &&
-      `${request.title} ${clients.find((client) => client.id === request.client_id)?.name || ""}`
-        .toLocaleLowerCase()
-        .includes(search.trim().toLocaleLowerCase()),
+      request.title.toLocaleLowerCase().includes(search.trim().toLocaleLowerCase()),
   );
   const toggleStatusFilter = (status: Status) =>
     setStatusFilters((current) =>
@@ -481,7 +473,7 @@ function RequestsPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 className="h-9 rounded-full border-0 bg-muted/55 pl-9 shadow-none focus-visible:ring-1"
-                placeholder="Buscar por ID, cliente ou assunto…"
+                placeholder="Buscar por ID ou assunto…"
               />
             </div>
             <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-xs text-muted-foreground">
@@ -522,19 +514,6 @@ function RequestsPage() {
             </span>
           </div>
           <div className="flex flex-wrap items-center gap-2 text-sm">
-            <Select value={clientFilter} onValueChange={setClientFilter}>
-              <SelectTrigger className="h-8 w-auto min-w-44 border-0 bg-transparent px-2 shadow-none hover:bg-muted/50 focus:ring-0">
-                <SelectValue placeholder="Todos os clientes" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Todos os clientes</SelectItem>
-                {clients.map((client) => (
-                  <SelectItem key={client.id} value={client.id}>
-                    {client.name}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
             <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
               <SelectTrigger className="h-8 w-auto min-w-52 border-0 bg-transparent px-2 shadow-none hover:bg-muted/50 focus:ring-0">
                 <SelectValue placeholder="Todos os colaboradores" />
@@ -568,7 +547,7 @@ function RequestsPage() {
             ) : (
               <div className="divide-y divide-border/70">
                 <div className="hidden grid-cols-[minmax(0,1fr)_270px_210px_120px] gap-4 px-4 pb-2 text-[10px] font-bold uppercase tracking-[.08em] text-muted-foreground md:grid">
-                  <span>Assunto · cliente</span>
+                  <span>Assunto</span>
                   <span>Status · prioridade · prazo</span>
                   <span>Pessoas envolvidas</span>
                   <span>Última atualização</span>
@@ -583,10 +562,6 @@ function RequestsPage() {
                       <p className="truncate text-sm font-semibold">
                         <span className="mr-2 inline-block h-1.5 w-1.5 rounded-full bg-emerald-500 align-middle" />
                         {request.title}
-                      </p>
-                      <p className="mt-1 truncate text-xs text-primary/80">
-                        {clients.find((client) => client.id === request.client_id)?.name ||
-                          "Sem cliente vinculado"}
                       </p>
                       {request.description && (
                         <p className="mt-1 line-clamp-1 text-xs text-muted-foreground">
@@ -1009,48 +984,23 @@ function RequestsPage() {
                 placeholder="Explique o que precisa ser resolvido."
               />
             </div>
-            <div className="grid grid-cols-2 gap-3">
-              <div>
-                <Label>Cliente</Label>
-                <Select
-                  value={form.clientId || "none"}
-                  onValueChange={(value) =>
-                    setForm({ ...form, clientId: value === "none" ? "" : value })
-                  }
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder="Sem cliente" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="none">Sem cliente</SelectItem>
-                    {clients
-                      .filter((client) => client.is_active)
-                      .map((client) => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.name}
-                        </SelectItem>
-                      ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <div>
-                <Label>Prioridade</Label>
-                <Select
-                  value={form.priority}
-                  onValueChange={(value) => setForm({ ...form, priority: value })}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {Object.entries(priorityLabel).map(([value, label]) => (
-                      <SelectItem key={value} value={value}>
-                        {label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
+            <div>
+              <Label>Prioridade</Label>
+              <Select
+                value={form.priority}
+                onValueChange={(value) => setForm({ ...form, priority: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {Object.entries(priorityLabel).map(([value, label]) => (
+                    <SelectItem key={value} value={value}>
+                      {label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label>Participantes</Label>

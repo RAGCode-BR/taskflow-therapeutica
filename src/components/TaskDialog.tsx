@@ -27,7 +27,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/use-auth";
 import {
   useAssignableProfiles,
-  useClients,
   useColumns,
   useProfiles,
   useTaskStatuses,
@@ -53,10 +52,6 @@ import { format } from "date-fns";
 import { AttachmentPreviewDialog } from "@/components/AttachmentPreviewDialog";
 import { FileDropZone } from "@/components/FileDropZone";
 import { isTaskAttachmentTooLarge, MAX_TASK_ATTACHMENT_LABEL } from "@/lib/attachment-limits";
-import {
-  removeTaskAttachmentAndClientCopy,
-  syncTaskAttachmentToClient,
-} from "@/lib/sync-task-attachment-to-client";
 import { RichTextEditor } from "@/components/RichTextEditor";
 import { SubtaskDialog, type EditableSubtask } from "@/components/SubtaskDialog";
 import {
@@ -78,7 +73,6 @@ interface Props {
     description?: string;
     dueDate?: string;
     dueTime?: string;
-    clientId?: string | null;
     assigneeId?: string | null;
     priority?: Task["priority"];
   };
@@ -168,7 +162,6 @@ export function TaskDialog({
   const qc = useQueryClient();
   const { user, profile, isAdmin, activeWorkspace, workspaces } = useAuth();
   const { data: cols } = useColumns();
-  const { data: clients } = useClients();
   const { data: profiles } = useProfiles();
   const [targetWorkspaceId, setTargetWorkspaceId] = useState<string>("");
   // Ao lançar a tarefa em outro ambiente, só as pessoas de lá podem assumi-la.
@@ -182,9 +175,6 @@ export function TaskDialog({
   const [status, setStatus] = useState<Task["status"]>("todo");
   const [priority, setPriority] = useState<Task["priority"]>("medium");
   const [columnId, setColumnId] = useState<string>("");
-  const [clientId, setClientId] = useState<string>("");
-  const [clientPickerOpen, setClientPickerOpen] = useState(false);
-  const [clientSearch, setClientSearch] = useState("");
   const [assigneeId, setAssigneeId] = useState<string>("");
   const [collaboratorIds, setCollaboratorIds] = useState<string[]>([]);
   const [collaboratorPickerOpen, setCollaboratorPickerOpen] = useState(false);
@@ -231,14 +221,6 @@ export function TaskDialog({
   const canDeleteSubtask = (subtask: Subtask) =>
     !!isAdmin || subtask.assignee_id !== user?.id || task?.created_by === user?.id;
 
-  const filteredClients = useMemo(() => {
-    const term = clientSearch.trim().toLocaleLowerCase("pt-BR");
-    const activeClients = (clients ?? []).filter((client) => client.is_active);
-    return term
-      ? activeClients.filter((client) => client.name.toLocaleLowerCase("pt-BR").includes(term))
-      : activeClients;
-  }, [clients, clientSearch]);
-  const selectedClient = clients?.find((client) => client.id === clientId);
   const mentionableProfiles = useMemo(
     () => (profiles ?? []).filter((candidate) => candidate.is_active !== false),
     [profiles],
@@ -268,8 +250,6 @@ export function TaskDialog({
 
   useEffect(() => {
     if (!open) return;
-    setClientPickerOpen(false);
-    setClientSearch("");
     setEditingSubtaskId(null);
     setSubtaskTitleDraft("");
     if (task) {
@@ -279,7 +259,6 @@ export function TaskDialog({
       setPriority(task.priority);
       setColumnId(task.column_id ?? "");
       setTargetWorkspaceId(task.workspace_id ?? activeWorkspace?.id ?? "");
-      setClientId(task.client_id ?? "");
       setAssigneeId(task.assignee_id ?? "");
       void loadCollaborators(task.id);
       setDueDate(task.due_date ? format(new Date(task.due_date), "yyyy-MM-dd") : "");
@@ -298,7 +277,6 @@ export function TaskDialog({
       setPriority(defaults?.priority ?? "medium");
       setColumnId(defaultColumnId ?? "");
       setTargetWorkspaceId(activeWorkspace?.id ?? "");
-      setClientId(defaults?.clientId ?? "");
       setAssigneeId(defaults?.assigneeId ?? user?.id ?? "");
       setCollaboratorIds([]);
       setDueDate(defaults?.dueDate ?? "");
@@ -323,7 +301,6 @@ export function TaskDialog({
     defaults?.title,
     defaults?.description,
     defaults?.priority,
-    defaults?.clientId,
     defaults?.assigneeId,
     defaults?.dueDate,
     defaults?.dueTime,
@@ -486,7 +463,6 @@ export function TaskDialog({
       status_id: matchingStatus?.id ?? null,
       priority,
       column_id: columnId || null,
-      client_id: clientId || null,
       assignee_id: assigneeId || null,
       due_date: deadlineToIso(dueDate),
       due_time: dueDate ? dueTime || null : null,
@@ -630,6 +606,7 @@ export function TaskDialog({
         id: taskId,
         ...payload,
         due_time: payload.due_time ?? null,
+        client_id: null,
         assigned_by: null,
         assigned_at: null,
         position: 0,
@@ -1216,21 +1193,6 @@ export function TaskDialog({
       return false;
     }
     const attachment = data as Attachment;
-    try {
-      await syncTaskAttachmentToClient({
-        file,
-        taskId: tid,
-        sourceAttachmentId: attachment.id,
-        sourceStoragePath: path,
-        uploadedBy: user.id,
-      });
-    } catch (syncError) {
-      await supabase.from("attachments").delete().eq("id", attachment.id);
-      await supabase.storage.from("task-attachments").remove([path]);
-      toast.error(`${file.name}: não foi possível salvar o arquivo do cliente.`);
-      console.error("Could not sync task attachment to client files", syncError);
-      return false;
-    }
     // A subscription realtime já pode ter inserido este anexo (o INSERT no
     // banco dispara o evento antes deste await terminar); sem checar, os dois
     // caminhos somam a mesma linha duas vezes.
@@ -1308,7 +1270,18 @@ export function TaskDialog({
       return;
     }
     try {
-      await removeTaskAttachmentAndClientCopy(att.id);
+      const { error } = await supabase.from("attachments").delete().eq("id", att.id);
+      if (error) throw error;
+      if (att.mime_type !== LINK_MIME) {
+        const { error: storageError } = await supabase.storage
+          .from("task-attachments")
+          .remove([att.storage_path]);
+        if (storageError)
+          console.error(
+            "Could not remove attachment object after deleting its record",
+            storageError,
+          );
+      }
       setAttachments(attachments.filter((a) => a.id !== att.id));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível excluir o arquivo.");
@@ -1503,63 +1476,6 @@ export function TaskDialog({
                   <SelectItem value={COMPLETED_STATUS_VALUE}>Concluído</SelectItem>
                 </SelectContent>
               </Select>
-            </div>
-            <div className="order-3 space-y-2">
-              <Label className="text-xs">Cliente</Label>
-              <Popover open={clientPickerOpen} onOpenChange={setClientPickerOpen}>
-                <PopoverTrigger asChild>
-                  <Button variant="outline" className="w-full justify-between font-normal">
-                    <span className="truncate">{selectedClient?.name ?? "Nenhum"}</span>
-                    <ChevronDown className="h-4 w-4 shrink-0 opacity-50" />
-                  </Button>
-                </PopoverTrigger>
-                <PopoverContent
-                  align="start"
-                  className="w-[var(--radix-popover-trigger-width)] p-2"
-                >
-                  <Input
-                    autoFocus
-                    value={clientSearch}
-                    onChange={(event) => setClientSearch(event.target.value)}
-                    placeholder="Pesquisar cliente..."
-                    className="mb-2 h-8 text-xs"
-                  />
-                  <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setClientId("");
-                        setClientPickerOpen(false);
-                      }}
-                      className={`flex w-full items-center rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted ${!clientId ? "bg-muted font-medium" : ""}`}
-                    >
-                      Nenhum
-                    </button>
-                    {filteredClients.map((client) => (
-                      <button
-                        key={client.id}
-                        type="button"
-                        onClick={() => {
-                          setClientId(client.id);
-                          setClientPickerOpen(false);
-                        }}
-                        className={`flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm hover:bg-muted ${clientId === client.id ? "bg-muted font-medium" : ""}`}
-                      >
-                        <span
-                          className="h-2 w-2 shrink-0 rounded-full"
-                          style={{ backgroundColor: client.color ?? "#94a3b8" }}
-                        />
-                        <span className="truncate">{client.name}</span>
-                      </button>
-                    ))}
-                    {filteredClients.length === 0 && (
-                      <p className="px-2 py-2 text-xs text-muted-foreground">
-                        Nenhum cliente encontrado.
-                      </p>
-                    )}
-                  </div>
-                </PopoverContent>
-              </Popover>
             </div>
             <div className="order-4 space-y-2">
               <Label className="text-xs">Responsável</Label>

@@ -1,6 +1,6 @@
 import { createFileRoute, Link, Navigate } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { useClients, useProfiles } from "@/hooks/use-data";
+import { useProfiles } from "@/hooks/use-data";
 import { Card } from "@/components/ui/card";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Badge } from "@/components/ui/badge";
@@ -41,28 +41,25 @@ const ACCESS_OPTIONS = [
   ["tasks", "Minhas tarefas"],
   ["conversations", "Conversas"],
   ["obligations", "Obrigações"],
-  ["clients", "Clientes"],
   ["reports", "Relatórios"],
   ["mural", "Mural"],
   ["trash", "Lixeira"],
   ["settings", "Personalizar"],
 ] as const;
 const SINGLE_WORKSPACE = true;
-type Role = "admin" | "collaborator" | "client";
+type Role = "admin" | "collaborator";
 type FormState = {
   fullName: string;
   login: string;
   password: string;
   role: Role;
   permissions: string[];
-  clientId: string;
   marketingAccess: boolean;
 };
 const COLLABORATOR_DEFAULT_PERMISSIONS = [
   "dashboard",
   "tasks",
   "conversations",
-  "clients",
   "mural",
   "trash",
   "settings",
@@ -75,14 +72,15 @@ const defaults: FormState = {
   // Padrão da casa para um colaborador: acesso ao dia a dia. Obrigações e
   // relatórios continuam disponíveis para liberação manual pelo administrador.
   permissions: COLLABORATOR_DEFAULT_PERMISSIONS,
-  clientId: "",
   marketingAccess: false,
 };
 const roleLabel: Record<Role, string> = {
   admin: "Administrador",
   collaborator: "Colaboradores",
-  client: "Cliente",
 };
+// Contas antigas com a categoria "client" (portal descontinuado) são tratadas
+// como colaboradores: ao salvar, passam a ser gravadas como Colaborador.
+const toRole = (value: string | undefined): Role => (value === "admin" ? "admin" : "collaborator");
 
 function AccessForm({
   value,
@@ -95,7 +93,6 @@ function AccessForm({
   includeCredentials?: boolean;
   marketingOnly?: boolean;
 }) {
-  const { data: clients = [] } = useClients();
   const toggle = (permission: string) =>
     onChange({
       ...value,
@@ -160,24 +157,19 @@ function AccessForm({
               ...value,
               role: e.target.value as Role,
               permissions:
-                e.target.value === "client"
-                  ? []
-                  : // Trocar de Admin/Cliente para Colaborador não deve carregar
-                    // sobras de outra categoria — volta ao padrão da casa, do
-                    // mesmo jeito que Cliente já reseta ao entrar nela.
-                    e.target.value === "collaborator" && value.role !== "collaborator"
-                    ? COLLABORATOR_DEFAULT_PERMISSIONS
-                    : value.permissions,
-              marketingAccess: e.target.value === "client" ? false : value.marketingAccess,
+                // Trocar de Admin para Colaborador não deve carregar sobras de
+                // outra categoria — volta ao padrão da casa.
+                e.target.value === "collaborator" && value.role !== "collaborator"
+                  ? COLLABORATOR_DEFAULT_PERMISSIONS
+                  : value.permissions,
             })
           }
         >
           <option value="collaborator">Colaborador</option>
-          {!marketingOnly && <option value="client">Cliente</option>}
           {!marketingOnly && <option value="admin">Administrador</option>}
         </select>
       </div>
-      {!SINGLE_WORKSPACE && !marketingOnly && value.role !== "client" && (
+      {!SINGLE_WORKSPACE && !marketingOnly && (
         <label className="flex cursor-pointer items-start justify-between gap-4 rounded-xl border p-3">
           <span>
             <span className="block text-sm font-medium">
@@ -198,30 +190,6 @@ function AccessForm({
             onCheckedChange={(checked) => onChange({ ...value, marketingAccess: checked === true })}
           />
         </label>
-      )}
-      {value.role === "client" && (
-        <div className="space-y-2">
-          <Label>Cliente vinculado</Label>
-          <select
-            required
-            className="h-10 w-full rounded-md border bg-background px-3 text-sm"
-            value={value.clientId}
-            onChange={(e) => onChange({ ...value, clientId: e.target.value })}
-          >
-            <option value="">Selecione o cliente</option>
-            {clients
-              .filter((client) => client.is_active || client.id === value.clientId)
-              .map((client) => (
-                <option key={client.id} value={client.id}>
-                  {client.name}
-                  {client.is_active ? "" : " (inativo)"}
-                </option>
-              ))}
-          </select>
-          <p className="text-xs text-muted-foreground">
-            Este usuário verá somente as tarefas e faturas deste cliente.
-          </p>
-        </div>
       )}
       <div className="space-y-2">
         <Label>Acessos do sistema</Label>
@@ -299,12 +267,6 @@ function UsersPage() {
     queryKey: ["roles"],
     queryFn: async () => (await supabase.from("user_roles").select("user_id, role")).data ?? [],
   });
-  const { data: clientLinks = [] } = useQuery({
-    queryKey: ["client_user_links"],
-    queryFn: async () =>
-      ((await (supabase.from("client_user_links" as any) as any).select("user_id, client_id"))
-        .data ?? []) as { user_id: string; client_id: string }[],
-  });
   const { data: permissionRows = [] } = useQuery({
     queryKey: ["user_permissions"],
     queryFn: async () =>
@@ -376,7 +338,6 @@ function UsersPage() {
     qc.invalidateQueries({ queryKey: ["profiles"] });
     qc.invalidateQueries({ queryKey: ["roles"] });
     qc.invalidateQueries({ queryKey: ["user_permissions"] });
-    qc.invalidateQueries({ queryKey: ["client_user_links"] });
     qc.invalidateQueries({ queryKey: ["marketing_members"] });
     qc.invalidateQueries({ queryKey: ["current_workspace_members"] });
   };
@@ -389,8 +350,6 @@ function UsersPage() {
         );
       if (form.password.length < 8)
         throw new Error("A senha temporária deve ter ao menos 8 caracteres.");
-      if (form.role === "client" && !form.clientId)
-        throw new Error("Selecione o cliente que será vinculado a este acesso.");
       return invokeAccessManager(
         "create",
         inMarketing ? { ...form, role: "collaborator", marketingAccess: true } : form,
@@ -412,7 +371,6 @@ function UsersPage() {
         password: form.password || undefined,
         role: form.role,
         permissions: form.permissions,
-        clientId: form.clientId || null,
       });
       // Acesso ao Marketing é associação de ambiente, não permissão de menu —
       // vai por uma função própria e só quando o toggle muda.
@@ -479,11 +437,10 @@ function UsersPage() {
     onError: (e: any) => toast.error(e?.message ?? "Não foi possível excluir o acesso."),
   });
   const profilesWithCredentials = useMemo(() => {
-    const credentialsById = new Map(
-      profileEmails.map((item: { id: string; email: string | null; login: string | null }) => [
-        item.id,
-        { email: item.email, login: item.login },
-      ]),
+    const credentialsById = new Map<string, { email: string | null; login: string | null }>(
+      (profileEmails as Array<{ id: string; email: string | null; login: string | null }>).map(
+        (item) => [item.id, { email: item.email, login: item.login }],
+      ),
     );
     return profiles.map((profile) => ({
       ...profile,
@@ -510,11 +467,11 @@ function UsersPage() {
     [profilesWithCredentials, workspaceMemberIds],
   );
   const activeProfilesByRole = useMemo(() => {
-    const byRole: Record<Role, any[]> = { admin: [], collaborator: [], client: [] };
+    const byRole: Record<Role, any[]> = { admin: [], collaborator: [] };
     for (const profile of activeProfiles) {
-      const role = (roles.find(
-        (item: { user_id: string; role: Role }) => item.user_id === profile.id,
-      )?.role ?? "collaborator") as Role;
+      const role = toRole(
+        roles.find((item: { user_id: string; role: string }) => item.user_id === profile.id)?.role,
+      );
       byRole[role].push(profile);
     }
     return (Object.keys(byRole) as Role[]).map((role) => ({
@@ -529,14 +486,14 @@ function UsersPage() {
   }, [activeProfiles, roles]);
   const openEdit = (id: string) => {
     const profile = profiles.find((item) => item.id === id);
-    const role = (roles.find((r: { user_id: string; role: string }) => r.user_id === id)?.role ??
-      "collaborator") as Role;
+    const role = toRole(
+      roles.find((r: { user_id: string; role: string }) => r.user_id === id)?.role,
+    );
     setForm({
       ...defaults,
       fullName: profile?.full_name ?? "",
       role,
       permissions: permissionRows.find((p) => p.user_id === id)?.permissions ?? [],
-      clientId: clientLinks.find((link) => link.user_id === id)?.client_id ?? "",
       marketingAccess: marketingMembers.some((member) => member.user_id === id),
     });
     setEditing(id);
@@ -544,8 +501,9 @@ function UsersPage() {
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
   if (!isAdmin) return <Navigate to="/mural" />;
   const renderProfile = (p: any) => {
-    const role = (roles.find((r: { user_id: string; role: string }) => r.user_id === p.id)?.role ??
-      "collaborator") as Role;
+    const role = toRole(
+      roles.find((r: { user_id: string; role: string }) => r.user_id === p.id)?.role,
+    );
     const self = p.id === user?.id;
     const marketingMembership = marketingMembers.find((member) => member.user_id === p.id);
     const canManageMarketing = role === "admin" || role === "collaborator";

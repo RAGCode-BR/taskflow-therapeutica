@@ -11,7 +11,6 @@ const allAdminPermissions = [
   "tasks",
   "conversations",
   "obligations",
-  "clients",
   "reports",
   "mural",
   "users",
@@ -24,7 +23,6 @@ const validPermissions = new Set([
   "tasks",
   "conversations",
   "obligations",
-  "clients",
   "reports",
   "mural",
   "trash",
@@ -80,15 +78,8 @@ Deno.serve(async (request) => {
     const managesMarketing = data.workspaceSlug === "marketing";
     if (!["create", "update", "delete"].includes(action))
       return response({ error: "Ação inválida." }, 400);
-    if (action !== "delete" && !["admin", "collaborator", "client"].includes(role))
+    if (action !== "delete" && !["admin", "collaborator"].includes(role))
       return response({ error: "Categoria de acesso inválida." }, 400);
-    if (action !== "delete" && role === "client" && !validUuid(data.clientId))
-      return response({ error: "Selecione o cliente que será vinculado a este acesso." }, 400);
-    if (action === "create" && data.marketingAccess === true && role === "client")
-      return response(
-        { error: "O acesso de cliente deve permanecer vinculado à Consultoria." },
-        400,
-      );
 
     const { data: callerProfile, error: callerProfileError } = await admin
       .from("profiles")
@@ -203,12 +194,6 @@ Deno.serve(async (request) => {
         updated_by: authData.user.id,
       });
       if (permissionsError) throw permissionsError;
-      if (role === "client") {
-        const { error: linkError } = await admin
-          .from("client_user_links")
-          .upsert({ user_id: created.user.id, client_id: data.clientId });
-        if (linkError) throw linkError;
-      }
       if (data.marketingAccess === true) {
         const { data: marketingWorkspace, error: marketingWorkspaceError } = await admin
           .from("workspaces")
@@ -320,11 +305,11 @@ Deno.serve(async (request) => {
         .update({ permissions })
         .eq("user_id", data.userId);
       if (membershipPermissionsError) throw membershipPermissionsError;
-      const linkQuery = admin.from("client_user_links");
-      const { error: linkError } =
-        role === "client"
-          ? await linkQuery.upsert({ user_id: data.userId, client_id: data.clientId })
-          : await linkQuery.delete().eq("user_id", data.userId);
+      // Acessos de cliente foram descontinuados: remove o vínculo legado, se houver.
+      const { error: linkError } = await admin
+        .from("client_user_links")
+        .delete()
+        .eq("user_id", data.userId);
       if (linkError) throw linkError;
       return response({ ok: true });
     }

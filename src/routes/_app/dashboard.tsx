@@ -1,12 +1,6 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import {
-  type Task,
-  useClients,
-  useAssignableProfiles,
-  useColumns,
-  useSubtasks,
-} from "@/hooks/use-data";
+import { type Task, useAssignableProfiles, useColumns, useSubtasks } from "@/hooks/use-data";
 import { useWorkspaceTasks } from "@/hooks/use-workspace-tasks";
 import { DateFilterBar } from "@/components/DateFilterBar";
 import { matchDateFilter, priorityLabels, statusLabels, type DateFilter } from "@/lib/task-utils";
@@ -28,16 +22,7 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import {
-  BarChart,
-  Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-  Legend,
-} from "recharts";
+import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
 import {
   CheckCircle2,
   ListTodo,
@@ -85,12 +70,10 @@ const SUBTASK_BADGE: Record<SubtaskStatus, string> = {
 
 function TaskPreviewDialog({
   task,
-  clientsById,
   profilesById,
   onOpenChange,
 }: {
   task: Task | null;
-  clientsById: Map<string, string>;
   profilesById: Map<string, string>;
   onOpenChange: (open: boolean) => void;
 }) {
@@ -106,7 +89,6 @@ function TaskPreviewDialog({
   if (!task) return null;
 
   const done = isTaskDone(task);
-  const clientName = task.client_id ? clientsById.get(task.client_id) : null;
   const assigneeName = task.assignee_id ? profilesById.get(task.assignee_id) : null;
   const formatDate = (value: string | null) =>
     value ? format(parseISO(value), "dd/MM/yyyy", { locale: ptBR }) : "—";
@@ -137,12 +119,6 @@ function TaskPreviewDialog({
               <UserRound className="h-3.5 w-3.5" /> Consultor responsável
             </p>
             <p className="mt-1.5 font-medium">{assigneeName || "Sem consultor responsável"}</p>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              Cliente
-            </p>
-            <p className="mt-1.5 font-medium">{clientName || "Sem cliente vinculado"}</p>
           </div>
           <div>
             <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
@@ -285,12 +261,10 @@ function Stat({
 
 function TaskDetailPanel({
   detail,
-  clientsById,
   profilesById,
   onClose,
 }: {
   detail: Detail;
-  clientsById: Map<string, string>;
   profilesById: Map<string, string>;
   onClose: () => void;
 }) {
@@ -337,7 +311,6 @@ function TaskDetailPanel({
         ) : (
           <div className="max-h-[26rem] divide-y overflow-y-auto">
             {orderedTasks.map((task) => {
-              const clientName = task.client_id ? clientsById.get(task.client_id) : null;
               const assigneeName = task.assignee_id ? profilesById.get(task.assignee_id) : null;
               const done = isTaskDone(task);
               const date = done ? task.completed_at : task.due_date;
@@ -351,8 +324,7 @@ function TaskDetailPanel({
                     <div className="min-w-0 flex-1">
                       <p className="truncate font-medium">{task.title}</p>
                       <p className="mt-0.5 truncate text-xs text-muted-foreground">
-                        {[clientName, assigneeName].filter(Boolean).join(" · ") ||
-                          "Sem cliente ou responsável"}
+                        {assigneeName || "Sem responsável"}
                       </p>
                     </div>
                     <div className="flex shrink-0 items-center gap-2 text-xs">
@@ -382,7 +354,6 @@ function TaskDetailPanel({
       </Card>
       <TaskPreviewDialog
         task={previewTask}
-        clientsById={clientsById}
         profilesById={profilesById}
         onOpenChange={(open) => !open && setPreviewTask(null)}
       />
@@ -393,9 +364,7 @@ function TaskDetailPanel({
 function Dashboard() {
   const { profile, user, isAdmin } = useAuth();
   const { data: tasks = [] } = useWorkspaceTasks();
-  const { data: clients = [] } = useClients();
   // The chart only includes users eligible to receive tasks (admins and collaborators).
-  // The database query excludes client accounts, including future ones.
   const { data: assignableProfiles = [] } = useAssignableProfiles();
   useColumns();
   const [filter, setFilter] = useState<DateFilter>("this_month");
@@ -442,25 +411,6 @@ function Dashboard() {
         ? "tarefas pendentes"
         : "filtro selecionado";
   }, [filter, customPeriod]);
-  const byClient = useMemo(
-    () =>
-      clients
-        .map((client) => {
-          const clientTasks = filtered.filter((task) => task.client_id === client.id);
-          const concluded = clientTasks.filter(isTaskDone).length;
-          const overdue = clientTasks.filter((task) => matchDateFilter(task, "overdue")).length;
-          return {
-            name: client.name,
-            concluídas: concluded,
-            emAberto: clientTasks.length - concluded - overdue,
-            atrasadas: overdue,
-            total: clientTasks.length,
-          };
-        })
-        .filter((client) => client.total > 0)
-        .sort((a, b) => b.total - a.total),
-    [clients, filtered],
-  );
   const byUser = useMemo(
     () =>
       assignableProfiles.map((p) => ({
@@ -469,10 +419,6 @@ function Dashboard() {
         pendentes: filtered.filter((t) => t.assignee_id === p.id && !isTaskDone(t)).length,
       })),
     [assignableProfiles, filtered],
-  );
-  const clientsById = useMemo(
-    () => new Map(clients.map((client) => [client.id, client.name])),
-    [clients],
   );
   const profilesById = useMemo(
     () =>
@@ -644,7 +590,6 @@ function Dashboard() {
         {selectedMetric && (
           <TaskDetailPanel
             detail={memberDetails[selectedMetric]}
-            clientsById={clientsById}
             profilesById={profilesById}
             onClose={() => setSelectedMetric(null)}
           />
@@ -832,84 +777,26 @@ function Dashboard() {
       {selectedMetric && (
         <TaskDetailPanel
           detail={details[selectedMetric]}
-          clientsById={clientsById}
           profilesById={profilesById}
           onClose={() => setSelectedMetric(null)}
         />
       )}
 
-      <div className="grid gap-4 lg:grid-cols-2">
-        <Card className="p-5">
-          <h3 className="mb-4 font-semibold">Tarefas por usuário</h3>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={byUser}>
-                <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
-                <XAxis dataKey="name" fontSize={12} />
-                <YAxis fontSize={12} />
-                <Tooltip />
-                <Bar dataKey="feitas" stackId="a" fill="#059669" radius={[0, 0, 0, 0]} />
-                <Bar dataKey="pendentes" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-        </Card>
-        <Card className="p-5">
-          <div className="mb-1 flex items-baseline justify-between gap-3">
-            <h3 className="font-semibold">Panorama das atividades por cliente</h3>
-            <span className="text-xs text-muted-foreground">Conclusão × pendências</span>
-          </div>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Veja onde a equipe está avançando e quais clientes concentram atrasos.
-          </p>
-          <div className="h-72">
-            {byClient.length === 0 ? (
-              <div className="grid h-full place-items-center text-sm text-muted-foreground">
-                Nenhum cliente com tarefas ainda
-              </div>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart
-                  data={byClient}
-                  layout="vertical"
-                  margin={{ top: 4, right: 12, left: 10, bottom: 0 }}
-                >
-                  <CartesianGrid
-                    horizontal={false}
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--border))"
-                  />
-                  <XAxis type="number" allowDecimals={false} fontSize={11} />
-                  <YAxis type="category" dataKey="name" width={112} tick={{ fontSize: 11 }} />
-                  <Tooltip cursor={{ fill: "hsl(var(--muted))", fillOpacity: 0.45 }} />
-                  <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-                  <Bar
-                    dataKey="concluídas"
-                    name="Concluídas"
-                    stackId="atividade"
-                    fill="#059669"
-                    radius={[0, 0, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="emAberto"
-                    name="Em aberto"
-                    stackId="atividade"
-                    fill="#2563eb"
-                    radius={[0, 0, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="atrasadas"
-                    name="Atrasadas"
-                    stackId="atividade"
-                    fill="#dc2626"
-                    radius={[0, 4, 4, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </Card>
-      </div>
+      <Card className="p-5">
+        <h3 className="mb-4 font-semibold">Tarefas por usuário</h3>
+        <div className="h-64">
+          <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={byUser}>
+              <CartesianGrid strokeDasharray="3 3" stroke="hsl(var(--border))" />
+              <XAxis dataKey="name" fontSize={12} />
+              <YAxis fontSize={12} />
+              <Tooltip />
+              <Bar dataKey="feitas" stackId="a" fill="#059669" radius={[0, 0, 0, 0]} />
+              <Bar dataKey="pendentes" stackId="a" fill="#f59e0b" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
 
       <Card className="p-5">
         <h3 className="mb-2 font-semibold">Resultado do filtro</h3>

@@ -55,10 +55,6 @@ import {
 import { AttachmentPreviewDialog } from "@/components/AttachmentPreviewDialog";
 import { FileDropZone } from "@/components/FileDropZone";
 import { isTaskAttachmentTooLarge, MAX_TASK_ATTACHMENT_LABEL } from "@/lib/attachment-limits";
-import {
-  removeTaskAttachmentAndClientCopy,
-  syncTaskAttachmentToClient,
-} from "@/lib/sync-task-attachment-to-client";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { RichTextEditor, RichTextView } from "@/components/RichTextEditor";
 import { SubtaskDialog, type EditableSubtask } from "@/components/SubtaskDialog";
@@ -68,8 +64,6 @@ import { useNavigate } from "@tanstack/react-router";
 import { useAuth } from "@/hooks/use-auth";
 import {
   useAssignableProfiles,
-  useRelatedClients,
-  type Client,
   type KanbanColumn,
   type Profile,
   type Task,
@@ -124,7 +118,6 @@ const hasExplicitDueTime = (time: string | null) => Boolean(formatDueTime(time))
 interface Props {
   task: Task;
   columns?: KanbanColumn[];
-  clients?: Client[];
   profiles?: Profile[];
   tags?: TaskTag[];
   statuses?: TaskStatus[];
@@ -166,7 +159,6 @@ function readableText(hex: string) {
 export function TaskCard({
   task,
   columns = [],
-  clients = [],
   profiles = [],
   tags = [],
   statuses = [],
@@ -407,16 +399,6 @@ export function TaskCard({
     () => tagIds.map((id) => tags.find((t) => t.id === id)).filter(Boolean) as TaskTag[],
     [tagIds, tags],
   );
-  // O cliente pode ser do outro ambiente, quando a tarefa foi lançada para lá.
-  // Nesse caso ele não está na lista do ambiente ativo, e o nome vem da consulta
-  // de exibição.
-  const { data: relatedClients } = useRelatedClients();
-  const client = useMemo(
-    () =>
-      clients.find((c) => c.id === task.client_id) ??
-      relatedClients?.find((c) => c.id === task.client_id),
-    [clients, relatedClients, task.client_id],
-  );
   const assignee = useMemo(
     () => profiles.find((p) => p.id === task.assignee_id),
     [profiles, task.assignee_id],
@@ -595,22 +577,6 @@ export function TaskCard({
       return false;
     }
     const att = data as Attachment;
-    try {
-      await syncTaskAttachmentToClient({
-        file,
-        taskId: task.id,
-        sourceAttachmentId: att.id,
-        sourceStoragePath: path,
-        uploadedBy: user.id,
-        contentType,
-      });
-    } catch (syncError) {
-      await supabase.from("attachments").delete().eq("id", att.id);
-      await supabase.storage.from("task-attachments").remove([path]);
-      toast.error(`${file.name}: não foi possível salvar o arquivo do cliente.`);
-      console.error("Could not sync task attachment to client files", syncError);
-      return false;
-    }
     // A subscription realtime já pode ter inserido este anexo (o INSERT no
     // banco dispara o evento antes deste await terminar); sem checar, os dois
     // caminhos somam a mesma linha duas vezes.
@@ -661,7 +627,18 @@ export function TaskCard({
       return;
     }
     try {
-      await removeTaskAttachmentAndClientCopy(a.id);
+      const { error } = await supabase.from("attachments").delete().eq("id", a.id);
+      if (error) throw error;
+      if (a.mime_type !== LINK_MIME) {
+        const { error: storageError } = await supabase.storage
+          .from("task-attachments")
+          .remove([a.storage_path]);
+        if (storageError)
+          console.error(
+            "Could not remove attachment object after deleting its record",
+            storageError,
+          );
+      }
       setAttachments((c) => c.filter((x) => x.id !== a.id));
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "Não foi possível excluir o arquivo.");
@@ -820,7 +797,6 @@ export function TaskCard({
   };
 
   const priority = task.priority ? PRIORITY_LABELS[task.priority] : null;
-  const clientText = client?.color ? readableText(client.color) : "#fff";
 
   const toggleTag = async (tagId: string) => {
     const has = tagIds.includes(tagId);
@@ -1128,13 +1104,6 @@ export function TaskCard({
         className="group flex min-h-[132px] w-full cursor-grab touch-none flex-col overflow-hidden rounded-[0.75rem] border bg-card shadow-sm transition hover:border-primary/40 hover:shadow active:cursor-grabbing"
         title={task.title || "Sem título"}
       >
-        <div
-          className="flex min-h-7 items-center gap-1.5 px-2 py-1 text-[10px] font-bold uppercase tracking-wider"
-          style={client?.color ? { background: client.color, color: clientText } : undefined}
-        >
-          <Users className="h-3 w-3 shrink-0" />
-          <span className="truncate">{client?.name || "Sem cliente"}</span>
-        </div>
         <button
           type="button"
           onPointerDown={stop}
@@ -1236,20 +1205,6 @@ export function TaskCard({
           "group relative flex min-h-[420px] w-full cursor-grab touch-none flex-col overflow-visible rounded-[0.75rem] border bg-card shadow-sm transition hover:border-primary/40 hover:shadow active:cursor-grabbing",
         )}
       >
-        {/* Client color strip at top */}
-        {client?.color ? (
-          <div
-            className={cn(
-              "flex items-center gap-1.5 px-2.5 py-1 text-[10px] font-bold uppercase tracking-wider",
-              "rounded-t-[0.75rem]",
-            )}
-            style={{ background: client.color, color: clientText }}
-          >
-            <Users className="h-3 w-3" />
-            <span className="truncate">{client.name}</span>
-          </div>
-        ) : null}
-
         <div className="min-h-0 flex-1 overflow-visible p-2">
           <div className="flex flex-col gap-0.5">
             {/* Tags — multiple, click chip to manage */}
@@ -2204,26 +2159,6 @@ export function TaskCard({
                   )}
                 />
 
-                {!client ? (
-                  <CompactRow
-                    icon={<Users className="h-3 w-3" />}
-                    empty
-                    label="Adicionar cliente"
-                    render={(close) => (
-                      <PopoverField label="Cliente">
-                        <ClientPicker
-                          clients={clients}
-                          value={task.client_id}
-                          onChange={(clientId) => {
-                            void update({ client_id: clientId });
-                            close();
-                          }}
-                        />
-                      </PopoverField>
-                    )}
-                  />
-                ) : null}
-
                 <button
                   type="button"
                   onClick={(event) => {
@@ -2349,7 +2284,7 @@ export function TaskCard({
               autoFocus
               value={subDueReason.reason}
               onChange={(e) => setSubDueReason((c) => ({ ...c, reason: e.target.value }))}
-              placeholder="Justificativa obrigatória — aparece no relatório do cliente"
+              placeholder="Justificativa obrigatória"
               className="min-h-[80px] text-sm"
             />
           </div>
@@ -2517,71 +2452,6 @@ function PopoverField({ label, children }: { label: string; children: React.Reac
         {label}
       </p>
       {children}
-    </div>
-  );
-}
-
-function ClientPicker({
-  clients,
-  value,
-  onChange,
-}: {
-  clients: Client[];
-  value: string | null;
-  onChange: (clientId: string | null) => void;
-}) {
-  const [search, setSearch] = useState("");
-  const filteredClients = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase("pt-BR");
-    const selectableClients = clients.filter((client) => client.is_active || client.id === value);
-    return term
-      ? selectableClients.filter((client) => client.name.toLocaleLowerCase("pt-BR").includes(term))
-      : selectableClients;
-  }, [clients, search, value]);
-  return (
-    <div className="space-y-2">
-      <Input
-        autoFocus
-        value={search}
-        onChange={(event) => setSearch(event.target.value)}
-        placeholder="Pesquisar cliente..."
-        className="h-8 text-xs"
-      />
-      <div className="max-h-56 space-y-1 overflow-y-auto pr-1">
-        <button
-          type="button"
-          onClick={() => onChange(null)}
-          className={cn(
-            "flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted",
-            !value && "bg-muted font-medium",
-          )}
-        >
-          Nenhum
-        </button>
-        {filteredClients.map((client) => (
-          <button
-            key={client.id}
-            type="button"
-            onClick={() => onChange(client.id)}
-            className={cn(
-              "flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted",
-              value === client.id && "bg-muted font-medium",
-            )}
-          >
-            <span
-              className="mr-2 h-2 w-2 shrink-0 rounded-full"
-              style={{ backgroundColor: client.color ?? "#94a3b8" }}
-            />
-            <span className="truncate">
-              {client.name}
-              {client.is_active ? "" : " (inativo)"}
-            </span>
-          </button>
-        ))}
-        {filteredClients.length === 0 && (
-          <p className="px-2 py-2 text-xs text-muted-foreground">Nenhum cliente encontrado.</p>
-        )}
-      </div>
     </div>
   );
 }

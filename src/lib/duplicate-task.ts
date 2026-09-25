@@ -1,6 +1,5 @@
 import { supabase } from "@/integrations/supabase/client";
 import type { Task } from "@/hooks/use-data";
-import { syncTaskAttachmentToClient } from "@/lib/sync-task-attachment-to-client";
 
 type CopiedSubtask = {
   title: string;
@@ -22,7 +21,6 @@ export async function duplicateTask(task: Task, dueDate: string, userId: string)
     status: task.status === "done" ? "todo" : task.status,
     priority: task.priority,
     column_id: task.column_id,
-    client_id: task.client_id,
     assignee_id: task.assignee_id,
     due_date: new Date(`${dueDate}T12:00:00`).toISOString(),
     color: task.color,
@@ -89,28 +87,9 @@ export async function duplicateTask(task: Task, dueDate: string, userId: string)
         contentType: attachment.mime_type || "application/octet-stream",
       });
       if (uploadError) continue;
-      const { data: duplicatedAttachment, error: duplicateAttachmentError } = await supabase
+      await supabase
         .from("attachments")
-        .insert({ ...attachment, task_id: newTaskId, storage_path: storagePath, uploaded_by: userId })
-        .select("id")
-        .single();
-      if (duplicateAttachmentError || !duplicatedAttachment) continue;
-
-      try {
-        await syncTaskAttachmentToClient({
-          file: new File([fileData], attachment.file_name, {
-            type: attachment.mime_type || "application/octet-stream",
-          }),
-          taskId: newTaskId,
-          sourceAttachmentId: duplicatedAttachment.id,
-          sourceStoragePath: storagePath,
-          uploadedBy: userId,
-          contentType: attachment.mime_type || "application/octet-stream",
-        });
-      } catch {
-        await supabase.from("attachments").delete().eq("id", duplicatedAttachment.id);
-        await supabase.storage.from("task-attachments").remove([storagePath]);
-      }
+        .insert({ ...attachment, task_id: newTaskId, storage_path: storagePath, uploaded_by: userId });
     } catch {
       // An attachment failure must not prevent the task copy from being created.
     }

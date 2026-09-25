@@ -28,8 +28,6 @@ interface AuthCtx {
   profile: Profile | null;
   isAdmin: boolean;
   isCollaborator: boolean;
-  isClient: boolean;
-  clientId: string | null;
   permissions: string[];
   workspaces: WorkspaceMembership[];
   activeWorkspace: WorkspaceMembership | null;
@@ -45,14 +43,7 @@ const AuthContext = createContext<AuthCtx | undefined>(undefined);
 
 type OfflineAccessSnapshot = Pick<
   AuthCtx,
-  | "profile"
-  | "isAdmin"
-  | "isCollaborator"
-  | "isClient"
-  | "clientId"
-  | "permissions"
-  | "workspaces"
-  | "activeWorkspace"
+  "profile" | "isAdmin" | "isCollaborator" | "permissions" | "workspaces" | "activeWorkspace"
 >;
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -61,8 +52,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [profile, setProfile] = useState<Profile | null>(null);
   const [isAdmin, setIsAdmin] = useState(false);
   const [isCollaborator, setIsCollaborator] = useState(false);
-  const [isClient, setIsClient] = useState(false);
-  const [clientId, setClientId] = useState<string | null>(null);
   const [permissions, setPermissions] = useState<string[]>([]);
   const [workspaces, setWorkspaces] = useState<WorkspaceMembership[]>([]);
   const [activeWorkspace, setActiveWorkspaceState] = useState<WorkspaceMembership | null>(null);
@@ -78,8 +67,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setProfile(snapshot.profile);
       setIsAdmin(snapshot.isAdmin);
       setIsCollaborator(snapshot.isCollaborator);
-      setIsClient(snapshot.isClient);
-      setClientId(snapshot.clientId);
       setPermissions(snapshot.permissions);
       setWorkspaces(snapshot.workspaces);
       setActiveWorkspaceState(snapshot.activeWorkspace);
@@ -104,13 +91,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Load independent access records together.  Previously the layout was
     // released as soon as the session was restored, while this sequence was
     // still running.  During that interval `permissions` was empty and the
-    // entire sidebar was filtered out for client accounts.
+    // entire sidebar was filtered out.
     const [
       profileResult,
       activeWorkspaceResult,
       authResult,
       rolesResult,
-      linkResult,
       permissionsResult,
       membershipsResult,
       workspaceResult,
@@ -127,10 +113,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       (supabase as any).rpc("current_workspace_id"),
       supabase.auth.getUser(),
       supabase.from("user_roles").select("role").eq("user_id", uid),
-      (supabase.from("client_user_links" as any) as any)
-        .select("client_id")
-        .eq("user_id", uid)
-        .maybeSingle(),
       (supabase.from("user_permissions") as any)
         .select("permissions")
         .eq("user_id", uid)
@@ -145,7 +127,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       activeWorkspaceResult,
       authResult,
       rolesResult,
-      linkResult,
       permissionsResult,
       membershipsResult,
       workspaceResult,
@@ -161,7 +142,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       ? { ...profileResult.data, active_workspace_id: profileWorkspaceId }
       : null;
     const roles = rolesResult.data;
-    const link = linkResult.data;
     const access = permissionsResult.data;
     // Fetch memberships and workspace metadata independently.  The nested
     // select can be cached by PostgREST under the relation name and, in that
@@ -191,17 +171,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     // Admin-only pages are controlled by public.user_roles, not by hardcoded emails.
     const admin = !!roles?.some((r: { role: string }) => r.role === "admin");
     const collaborator = !!roles?.some((r: { role: string }) => r.role === "collaborator");
-    const client = !!roles?.some((r: { role: string }) => r.role === "client");
     setIsAdmin(admin);
     setIsCollaborator(collaborator);
-    setIsClient(client);
-    setClientId(link?.client_id ?? null);
     const systemPermissions = [
       "dashboard",
       "tasks",
       "conversations",
       "obligations",
-      "clients",
       "reports",
       "mural",
       "users",
@@ -226,8 +202,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       profile: prof ? ({ ...prof, email: authUser?.email ?? null, login } as Profile) : null,
       isAdmin: admin,
       isCollaborator: collaborator,
-      isClient: client,
-      clientId: link?.client_id ?? null,
       permissions: admin
         ? systemPermissions
         : (selectedWorkspace?.permissions ??
@@ -259,8 +233,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setProfile(null);
         setIsAdmin(false);
         setIsCollaborator(false);
-        setIsClient(false);
-        setClientId(null);
         setPermissions([]);
         setWorkspaces([]);
         setActiveWorkspaceState(null);
@@ -344,7 +316,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setProfile((current) => (current ? { ...current, active_workspace_id: workspaceId } : current));
     setActiveWorkspaceState(workspaces.find((workspace) => workspace.id === workspaceId) ?? null);
     // A full navigation drops every cached query from the other environment.
-    // This prevents a previously rendered client or task from briefly appearing
+    // This prevents a previously rendered task from briefly appearing
     // during the environment transition.
     window.location.assign("/dashboard");
   };
@@ -358,8 +330,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         profile,
         isAdmin,
         isCollaborator,
-        isClient,
-        clientId,
         permissions,
         workspaces,
         activeWorkspace,

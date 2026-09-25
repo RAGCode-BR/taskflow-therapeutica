@@ -8,7 +8,6 @@ import { Badge } from "@/components/ui/badge";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   useTasks,
-  useClients,
   useColumns,
   useProfiles,
   useSubtasks,
@@ -40,7 +39,6 @@ export const Route = createFileRoute("/_app/tasks/list")({
 
 function ListPage() {
   const { data: tasks = [] } = useTasks();
-  const { data: clients = [] } = useClients();
   const { data: columns = [] } = useColumns();
   const { data: profiles = [] } = useProfiles();
   const { data: subtasks = [] } = useSubtasks();
@@ -247,8 +245,7 @@ function ListPage() {
         <table className="w-full table-fixed border-collapse text-xs">
           <thead className="border-b bg-muted/50 text-left text-[10px] uppercase tracking-wide text-muted-foreground">
             <tr>
-              <th className="w-[29%] border-r px-2 py-2">Tarefa</th>
-              <th className="w-[11%] border-r px-2 py-2">Cliente</th>
+              <th className="w-[40%] border-r px-2 py-2">Tarefa</th>
               <th className="w-[13%] border-r px-2 py-2">Responsável</th>
               <th className="w-[12%] border-r px-2 py-2">Colaboradores</th>
               <th className="w-[10%] border-r px-2 py-2">Status</th>
@@ -277,12 +274,11 @@ function ListPage() {
           <tbody>
             {list.length === 0 ? (
               <tr>
-                <td colSpan={8} className="py-10 text-center text-muted-foreground">
+                <td colSpan={7} className="py-10 text-center text-muted-foreground">
                   Nenhuma tarefa
                 </td>
               </tr>
             ) : list.map((t, index) => {
-              const client = clients.find((c) => c.id === t.client_id);
               const assignee = profiles.find((p) => p.id === t.assignee_id);
               const isCompleted = t.status === "done" || !!t.completed_at;
               const previousTask = list[index - 1];
@@ -314,7 +310,7 @@ function ListPage() {
                 <Fragment key={t.id}>
                 {startsCompletedSection && (
                   <tr aria-label="Tarefas concluídas">
-                    <td colSpan={8} className="px-2 py-2">
+                    <td colSpan={7} className="px-2 py-2">
                       <button type="button" onClick={() => setCompletedOpen((current) => !current)} className="flex w-full items-center gap-3 border-t border-dashed border-muted-foreground/45 pt-2 text-left">
                         <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tarefas concluídas</span>
                         <span className="h-px flex-1 border-t border-dashed border-muted-foreground/30" />
@@ -334,15 +330,6 @@ function ListPage() {
                   }}
                 >
                   <td className="border-r px-2 py-2 font-medium"><span className="block truncate">{t.title}</span></td>
-                  <td className="border-r px-2 py-2">
-                    {client ? (
-                      <Badge variant="outline" style={{ borderColor: client.color ?? undefined }}>
-                        {client.name}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
-                    )}
-                  </td>
                   <td className="border-r px-2 py-2 text-muted-foreground">
                     {assignee?.full_name || assignee?.email || "—"}
                   </td>

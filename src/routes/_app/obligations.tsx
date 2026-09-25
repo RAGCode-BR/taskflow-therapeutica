@@ -41,12 +41,10 @@ import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { enqueueOfflineOperation, isOffline } from "@/lib/offline-sync";
 import {
-  useClients,
   useAssignableProfiles,
   useColumns,
   useProfiles,
   useTaskStatuses,
-  type Client,
   type KanbanColumn,
   type Profile,
   type Task,
@@ -122,7 +120,6 @@ type BulkTaskUpdates = {
   status_id?: string | null;
   completed_at?: string | null;
   column_id?: string | null;
-  client_id?: string | null;
   assignee_id?: string | null;
   priority?: Task["priority"];
   due_date?: string | null;
@@ -148,7 +145,6 @@ function ObligationsPage() {
     isLoading: loadingOccurrences,
     error: occurrencesError,
   } = useObligationOccurrences();
-  const { data: clients = [] } = useClients();
   const { data: profiles = [] } = useProfiles();
   const { data: assignableProfiles = [] } = useAssignableProfiles();
   const { data: columns = [] } = useColumns();
@@ -161,7 +157,6 @@ function ObligationsPage() {
   const [taskDialogOpen, setTaskDialogOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [search, setSearch] = useState("");
-  const [clientFilter, setClientFilter] = useState("all");
   const [departmentFilter, setDepartmentFilter] = useState("all");
   const [assigneeFilter, setAssigneeFilter] = useState("all");
   const [calendarCursor, setCalendarCursor] = useState(new Date());
@@ -178,7 +173,6 @@ function ObligationsPage() {
     description?: string;
     dueDate?: string;
     dueTime?: string;
-    clientId?: string | null;
     assigneeId?: string | null;
     priority?: Task["priority"];
   }>();
@@ -210,10 +204,6 @@ function ObligationsPage() {
   const obligationById = useMemo(
     () => new Map(obligations.map((obligation) => [obligation.id, obligation])),
     [obligations],
-  );
-  const clientById = useMemo(
-    () => new Map(clients.map((client) => [client.id, client])),
-    [clients],
   );
   const profileById = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile])),
@@ -251,20 +241,16 @@ function ObligationsPage() {
         if (!obligation) return false;
         if (departmentFilter !== "all" && obligation.department_id !== departmentFilter)
           return false;
-        if (clientFilter !== "all" && obligation.client_id !== clientFilter) return false;
         if (assigneeFilter !== "all" && obligation.assignee_id !== assigneeFilter) return false;
         const term = search.trim().toLocaleLowerCase("pt-BR");
         if (!term) return true;
-        const client = clientById.get(obligation.client_id ?? "");
         const department = departmentById.get(obligation.department_id ?? "");
-        return `${obligation.title} ${client?.name ?? ""} ${department?.name ?? ""}`
+        return `${obligation.title} ${department?.name ?? ""}`
           .toLocaleLowerCase("pt-BR")
           .includes(term);
       }),
     [
       assigneeFilter,
-      clientById,
-      clientFilter,
       departmentById,
       departmentFilter,
       obligationById,
@@ -354,7 +340,6 @@ function ObligationsPage() {
     setTaskDefaults({
       dueDate: occurrence.due_date,
       dueTime: occurrence.due_time?.slice(0, 5) ?? "",
-      clientId: obligation.client_id,
       assigneeId: obligation.assignee_id,
       priority: obligation.priority,
     });
@@ -391,7 +376,7 @@ function ObligationsPage() {
     );
   };
 
-  const selectClientOccurrences = (occurrenceIds: string[], selected: boolean) => {
+  const selectGroupOccurrences = (occurrenceIds: string[], selected: boolean) => {
     setSelectedOccurrenceIds((current) => {
       const next = new Set(current);
       occurrenceIds.forEach((id) => (selected ? next.add(id) : next.delete(id)));
@@ -792,7 +777,7 @@ function ObligationsPage() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar reunião, departamento ou cliente..."
+            placeholder="Buscar reunião ou departamento..."
             className="pl-9"
           />
         </div>
@@ -805,19 +790,6 @@ function ObligationsPage() {
             {departments.map((department) => (
               <SelectItem key={department.id} value={department.id}>
                 {department.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={clientFilter} onValueChange={setClientFilter}>
-          <SelectTrigger className="w-52">
-            <SelectValue placeholder="Todos os clientes" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os clientes</SelectItem>
-            {clients.map((client) => (
-              <SelectItem key={client.id} value={client.id}>
-                {client.name}
               </SelectItem>
             ))}
           </SelectContent>
@@ -889,7 +861,7 @@ function ObligationsPage() {
                               allSelected ? true : selectedIds.length > 0 ? "indeterminate" : false
                             }
                             onCheckedChange={(checked) =>
-                              selectClientOccurrences(occurrenceIds, checked === true)
+                              selectGroupOccurrences(occurrenceIds, checked === true)
                             }
                           />
                           Todas
@@ -959,7 +931,6 @@ function ObligationsPage() {
                           key={occurrence.id}
                           occurrence={occurrence}
                           obligation={obligation}
-                          client={clientById.get(obligation.client_id ?? "") ?? null}
                           department={department}
                           agendaTasks={agendaTasks}
                           assignee={
@@ -987,7 +958,6 @@ function ObligationsPage() {
             onCursorChange={setCalendarCursor}
             occurrences={activeOccurrences}
             obligationById={obligationById}
-            clientById={clientById}
             departmentById={departmentById}
             onOccurrenceClick={(occurrence) => {
               openMeeting(occurrence);
@@ -1027,7 +997,6 @@ function ObligationsPage() {
                   >
                     <div className="grid gap-3 lg:grid-cols-2">
                       {items.map((obligation) => {
-                        const client = clientById.get(obligation.client_id ?? "") ?? null;
                         const assignee = profileById.get(obligation.assignee_id ?? "");
                         const nextOccurrence = occurrences.find(
                           (occurrence) =>
@@ -1043,10 +1012,7 @@ function ObligationsPage() {
                                 <div className="flex items-center gap-2">
                                   <span
                                     className="h-3 w-3 shrink-0 rounded-sm"
-                                    style={{
-                                      backgroundColor:
-                                        department?.color || client?.color || "#64748b",
-                                    }}
+                                    style={{ backgroundColor: department?.color || "#64748b" }}
                                   />
                                   <h3 className="truncate font-semibold">{obligation.title}</h3>
                                   {!obligation.is_active && (
@@ -1054,7 +1020,6 @@ function ObligationsPage() {
                                   )}
                                 </div>
                                 <p className="mt-1 text-xs text-muted-foreground">
-                                  {client?.name || "Reunião interna"} ·{" "}
                                   {formatRecurrence(obligation)}
                                 </p>
                               </div>
@@ -1161,13 +1126,6 @@ function ObligationsPage() {
               ) ?? null)
             : null
         }
-        client={
-          meetingOccurrence
-            ? (clientById.get(
-                obligationById.get(meetingOccurrence.obligation_id)?.client_id ?? "",
-              ) ?? null)
-            : null
-        }
         tasks={meetingOccurrence ? (agendaTasksByOccurrence.get(meetingOccurrence.id) ?? []) : []}
         onCreateAgenda={() => meetingOccurrence && createAgendaTask(meetingOccurrence)}
         onOpenTask={(task) => meetingOccurrence && openAgendaTask(task, meetingOccurrence)}
@@ -1188,7 +1146,6 @@ function ObligationsPage() {
           0,
         )}
         profiles={assignableProfiles}
-        clients={clients}
         columns={columns}
         statuses={taskStatuses}
         onSave={saveBulkTaskChanges}
@@ -1260,7 +1217,6 @@ function MeetingOverviewDialog({
   occurrence,
   obligation,
   department,
-  client,
   tasks,
   onCreateAgenda,
   onOpenTask,
@@ -1271,7 +1227,6 @@ function MeetingOverviewDialog({
   occurrence: ObligationOccurrence | null;
   obligation: Obligation | null;
   department: ObligationDepartment | null;
-  client: Client | null;
   tasks: Task[];
   onCreateAgenda: () => void;
   onOpenTask: (task: Task) => void;
@@ -1291,7 +1246,6 @@ function MeetingOverviewDialog({
           <DialogDescription>
             {department?.name ?? "Sem departamento"} · {formatDate(occurrence.due_date)}
             {occurrence.due_time ? ` às ${occurrence.due_time.slice(0, 5)}` : ""}
-            {client ? ` · ${client.name}` : " · Reunião interna"}
           </DialogDescription>
         </DialogHeader>
 
@@ -1397,7 +1351,6 @@ function BulkTaskEditDialog({
   onOpenChange,
   taskCount,
   profiles,
-  clients,
   columns,
   statuses,
   onSave,
@@ -1406,7 +1359,6 @@ function BulkTaskEditDialog({
   onOpenChange: (open: boolean) => void;
   taskCount: number;
   profiles: Profile[];
-  clients: Client[];
   columns: KanbanColumn[];
   statuses: TaskStatus[];
   onSave: (changes: BulkTaskChanges) => Promise<boolean>;
@@ -1418,7 +1370,6 @@ function BulkTaskEditDialog({
   const [assignee, setAssignee] = useState("unchanged");
   const [priority, setPriority] = useState("unchanged");
   const [status, setStatus] = useState("unchanged");
-  const [client, setClient] = useState("unchanged");
   const [applyCollaborators, setApplyCollaborators] = useState(false);
   const [collaboratorIds, setCollaboratorIds] = useState<string[]>([]);
   const [applyDeadline, setApplyDeadline] = useState(false);
@@ -1436,7 +1387,6 @@ function BulkTaskEditDialog({
     setAssignee("unchanged");
     setPriority("unchanged");
     setStatus("unchanged");
-    setClient("unchanged");
     setApplyCollaborators(false);
     setCollaboratorIds([]);
     setApplyDeadline(false);
@@ -1468,9 +1418,6 @@ function BulkTaskEditDialog({
     }
     if (priority !== "unchanged") {
       updates.priority = priority === "none" ? null : (priority as NonNullable<Task["priority"]>);
-    }
-    if (client !== "unchanged") {
-      updates.client_id = client === "none" ? null : client;
     }
     if (status !== "unchanged") {
       if (status === "completed") {
@@ -1590,25 +1537,6 @@ function BulkTaskEditDialog({
                     </SelectItem>
                   ))}
                   <SelectItem value="completed">Concluído</SelectItem>
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>Cliente</Label>
-              <Select value={client} onValueChange={setClient} disabled={saving}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="unchanged">Não alterar</SelectItem>
-                  <SelectItem value="none">Sem cliente</SelectItem>
-                  {clients
-                    .filter((item) => item.is_active)
-                    .map((item) => (
-                      <SelectItem key={item.id} value={item.id}>
-                        {item.name}
-                      </SelectItem>
-                    ))}
                 </SelectContent>
               </Select>
             </div>
@@ -1797,7 +1725,6 @@ function DepartmentSection({
 function OccurrenceRow({
   occurrence,
   obligation,
-  client,
   department,
   agendaTasks,
   assignee,
@@ -1809,7 +1736,6 @@ function OccurrenceRow({
 }: {
   occurrence: ObligationOccurrence;
   obligation: Obligation;
-  client: Client | null;
   department: ObligationDepartment | null;
   agendaTasks: Task[];
   assignee: Profile | null;
@@ -1847,7 +1773,7 @@ function OccurrenceRow({
       />
       <div
         className="grid h-12 w-14 shrink-0 place-items-center rounded-xl text-center text-white"
-        style={{ backgroundColor: department?.color || client?.color || "#64748b" }}
+        style={{ backgroundColor: department?.color || "#64748b" }}
       >
         <span>
           <span className="block text-lg font-bold leading-none">
@@ -1878,7 +1804,7 @@ function OccurrenceRow({
           )}
         </div>
         <p className="mt-0.5 text-xs text-muted-foreground">
-          {department?.name || "Sem departamento"} · {client?.name || "Interna"} · {assigneeName} ·{" "}
+          {department?.name || "Sem departamento"} · {assigneeName} ·{" "}
           {formatRecurrence(obligation)}
           {occurrence.due_time ? ` · ${occurrence.due_time.slice(0, 5)}` : ""}
         </p>
@@ -1907,7 +1833,6 @@ function ObligationsCalendar({
   onCursorChange,
   occurrences,
   obligationById,
-  clientById,
   departmentById,
   onOccurrenceClick,
 }: {
@@ -1915,7 +1840,6 @@ function ObligationsCalendar({
   onCursorChange: (date: Date) => void;
   occurrences: ObligationOccurrence[];
   obligationById: Map<string, Obligation>;
-  clientById: Map<string, Client>;
   departmentById: Map<string, ObligationDepartment>;
   onOccurrenceClick: (occurrence: ObligationOccurrence) => void;
 }) {
@@ -1981,7 +1905,6 @@ function ObligationsCalendar({
                 {items.slice(0, 4).map((occurrence) => {
                   const obligation = obligationById.get(occurrence.obligation_id);
                   if (!obligation) return null;
-                  const client = clientById.get(obligation.client_id ?? "");
                   const department = departmentById.get(obligation.department_id ?? "");
                   return (
                     <button
@@ -1989,7 +1912,7 @@ function ObligationsCalendar({
                       type="button"
                       onClick={() => onOccurrenceClick(occurrence)}
                       className="block w-full truncate rounded px-1.5 py-1 text-left text-[10px] font-medium text-white shadow-sm hover:brightness-105"
-                      style={{ backgroundColor: department?.color || client?.color || "#64748b" }}
+                      style={{ backgroundColor: department?.color || "#64748b" }}
                       title={obligation.title}
                     >
                       {obligation.title}

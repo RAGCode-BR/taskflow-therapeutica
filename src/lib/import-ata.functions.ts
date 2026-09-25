@@ -9,7 +9,6 @@ const InputSchema = z
     text: z.string().optional(),
     filename: z.string().optional(),
     members: z.array(z.object({ id: z.string(), name: z.string() })).max(200),
-    clients: z.array(z.object({ id: z.string(), name: z.string() })).max(500),
     tags: z.array(z.object({ id: z.string(), name: z.string() })).max(500),
   })
   .refine((d) => !!(d.pdfBase64 || (d.text && d.text.trim())), {
@@ -22,8 +21,6 @@ export interface ExtractedTask {
   assignee_name: string | null;
   assignee_id: string | null;
   due_date: string | null; // ISO yyyy-mm-dd
-  client_name: string | null;
-  client_id: string | null;
   tag_name: string | null;
   tag_id: string | null;
   priority: "low" | "medium" | "high" | "urgent";
@@ -41,7 +38,6 @@ const CreateTasksSchema = z.object({
         priority: z.enum(["low", "medium", "high", "urgent"]),
         due_date: z.string().datetime(),
         assignee_id: z.string().uuid().nullable(),
-        client_id: z.string().uuid().nullable(),
         tag_id: z.string().uuid().nullable(),
       }),
     )
@@ -91,12 +87,11 @@ REGRAS:
 - Descrição: contexto extra da ata (1-3 frases). Se não houver, repita o título.
 - Responsável: nome EXATO citado na ata. Tente casar com esta lista de membros do sistema: [${memberList}]. Se não houver correspondência clara, use o nome literal da ata.
 - Prazo: se a ata mencionar data ("até 30/06", "próxima semana"), converta para AAAA-MM-DD. Hoje é ${today}. Caso contrário, null.
-- Cliente: tente identificar o cliente/projeto principal da ata.
 - Tag: classifique brevemente (ex.: "reunião", "cadastro", "configuração").
 - Prioridade: "low" | "medium" | "high" | "urgent". Padrão "medium". Use "high" se houver urgência explícita.
 
 SAÍDA: Apenas JSON válido, sem markdown, sem \`\`\`. Formato:
-{"tasks":[{"title":"...","description":"...","assignee_name":"...|null","due_date":"AAAA-MM-DD|null","client_name":"...|null","tag_name":"...|null","priority":"medium"}]}`;
+{"tasks":[{"title":"...","description":"...","assignee_name":"...|null","due_date":"AAAA-MM-DD|null","tag_name":"...|null","priority":"medium"}]}`;
 
     const userContent: Array<
       { text: string } | { inlineData: { mimeType: string; data: string } }
@@ -140,10 +135,8 @@ SAÍDA: Apenas JSON válido, sem markdown, sem \`\`\`. Formato:
     const out: ExtractedTask[] = taskArr.map((t) => {
       const o = (t ?? {}) as Record<string, unknown>;
       const assigneeName = typeof o.assignee_name === "string" ? o.assignee_name : null;
-      const clientName = typeof o.client_name === "string" ? o.client_name : null;
       const tagName = typeof o.tag_name === "string" ? o.tag_name : null;
       const matchedAssignee = matchByName(data.members, assigneeName);
-      const matchedClient = matchByName(data.clients, clientName);
       const matchedTag = matchByName(data.tags, tagName);
       const priorityRaw = typeof o.priority === "string" ? o.priority.toLowerCase() : "medium";
       const priority = (
@@ -158,8 +151,6 @@ SAÍDA: Apenas JSON válido, sem markdown, sem \`\`\`. Formato:
           typeof o.due_date === "string" && /^\d{4}-\d{2}-\d{2}$/.test(o.due_date)
             ? o.due_date
             : null,
-        client_name: clientName,
-        client_id: matchedClient?.id ?? null,
         tag_name: tagName,
         tag_id: matchedTag?.id ?? null,
         priority,

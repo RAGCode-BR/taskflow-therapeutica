@@ -1,10 +1,10 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase types are regenerated after the migration is applied. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Loader2, Plus, Trash2, X } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
-import { useAssignableProfiles, useClients, useColumns, useTaskStatuses } from "@/hooks/use-data";
+import { useAssignableProfiles, useColumns, useTaskStatuses } from "@/hooks/use-data";
 import {
   useObligationDepartments,
   useObligationTaskTemplates,
@@ -60,15 +60,12 @@ type AgendaDraft = { key: string; id?: string; title: string; assigneeId: string
 export function ObligationDialog({ open, onOpenChange, obligation }: ObligationDialogProps) {
   const queryClient = useQueryClient();
   const { user, activeWorkspace } = useAuth();
-  const { data: clients = [] } = useClients();
   const { data: profiles = [] } = useAssignableProfiles();
   const { data: columns = [] } = useColumns();
   const { data: statuses = [] } = useTaskStatuses();
   const { data: departments = [] } = useObligationDepartments();
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [clientIds, setClientIds] = useState<string[]>([]);
-  const [clientSearch, setClientSearch] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [newDepartmentName, setNewDepartmentName] = useState("");
   const [departmentOpen, setDepartmentOpen] = useState(false);
@@ -98,8 +95,6 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     if (!open) return;
     setTitle(obligation?.title ?? "");
     setDescription(obligation?.description ?? "");
-    setClientIds(obligation?.client_id ? [obligation.client_id] : []);
-    setClientSearch("");
     setDepartmentId(obligation?.department_id ?? "");
     setNewDepartmentName("");
     setAssigneeId(obligation?.assignee_id ?? "");
@@ -202,27 +197,6 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       ].sort((a, b) => a - b),
     [daysOfMonth],
   );
-
-  const activeClients = useMemo(() => clients.filter((client) => client.is_active), [clients]);
-  const filteredClients = useMemo(() => {
-    const term = clientSearch.trim().toLocaleLowerCase("pt-BR");
-    return term
-      ? activeClients.filter((client) => client.name.toLocaleLowerCase("pt-BR").includes(term))
-      : activeClients;
-  }, [activeClients, clientSearch]);
-  const selectedClientNames = useMemo(
-    () =>
-      clientIds
-        .map((id) => clients.find((client) => client.id === id)?.name)
-        .filter((name): name is string => Boolean(name)),
-    [clientIds, clients],
-  );
-
-  const toggleClient = (clientId: string) => {
-    setClientIds((current) =>
-      current.includes(clientId) ? current.filter((id) => id !== clientId) : [...current, clientId],
-    );
-  };
 
   const recurrencePreview = useMemo(() => {
     const every = intervalCount > 1 ? `A cada ${intervalCount}` : "Todo";
@@ -343,18 +317,19 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
 
     if (user && activeWorkspace && isOffline()) {
       const now = new Date().toISOString();
-      const targetClientIds = clientIds.length > 0 ? clientIds : [null];
       const localItems: Obligation[] = obligation
-        ? [{ ...obligation, ...payload, client_id: clientIds[0] ?? null, updated_at: now }]
-        : targetClientIds.map((clientId) => ({
-            id: crypto.randomUUID(),
-            workspace_id: activeWorkspace.id,
-            created_by: user.id,
-            created_at: now,
-            updated_at: now,
-            client_id: clientId,
-            ...payload,
-          }));
+        ? [{ ...obligation, ...payload, updated_at: now }]
+        : [
+            {
+              id: crypto.randomUUID(),
+              workspace_id: activeWorkspace.id,
+              created_by: user.id,
+              created_at: now,
+              updated_at: now,
+              client_id: null,
+              ...payload,
+            },
+          ];
       await Promise.all(
         localItems.map((item) =>
           enqueueOfflineOperation({
@@ -363,7 +338,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
             action: obligation ? "update" : "create",
             entityId: item.id,
             payload: obligation
-              ? { table: "obligations", patch: { ...payload, client_id: clientIds[0] ?? null } }
+              ? { table: "obligations", patch: payload }
               : { table: "obligations", record: item },
           }),
         ),
@@ -402,16 +377,11 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
 
     const request = obligation
       ? (supabase.from("obligations" as any) as any)
-          .update({ ...payload, client_id: clientIds[0] ?? null })
+          .update(payload)
           .eq("id", obligation.id)
           .select("id")
       : (supabase.from("obligations" as any) as any)
-          .insert(
-            (clientIds.length > 0 ? clientIds : [null]).map((clientId) => ({
-              ...payload,
-              client_id: clientId,
-            })),
-          )
+          .insert(payload)
           .select("id");
     const { data, error } = await request;
     if (error) {
@@ -446,13 +416,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       );
       return;
     }
-    toast.success(
-      obligation
-        ? "Obrigação atualizada"
-        : clientIds.length <= 1
-          ? "Obrigação criada"
-          : `Obrigação criada para ${clientIds.length} clientes`,
-    );
+    toast.success(obligation ? "Obrigação atualizada" : "Obrigação criada");
     onOpenChange(false);
   };
 
@@ -559,116 +523,6 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                     </div>
                   </PopoverContent>
                 </Popover>
-              </div>
-              <div className="space-y-2">
-                <Label>{obligation ? "Cliente vinculado" : "Clientes vinculados"}</Label>
-                {obligation ? (
-                  <Select
-                    value={clientIds[0] || "none"}
-                    onValueChange={(value) => setClientIds(value === "none" ? [] : [value])}
-                  >
-                    <SelectTrigger>
-                      <SelectValue placeholder="Selecione o cliente" />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="none">Nenhum cliente específico</SelectItem>
-                      {activeClients.map((client) => (
-                        <SelectItem key={client.id} value={client.id}>
-                          {client.name}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                ) : (
-                  <Popover>
-                    <PopoverTrigger asChild>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        className="w-full justify-between font-normal"
-                      >
-                        <span className="truncate text-left">
-                          {selectedClientNames.length === 0
-                            ? "Nenhum cliente específico"
-                            : selectedClientNames.length === 1
-                              ? selectedClientNames[0]
-                              : `${selectedClientNames.length} clientes selecionados`}
-                        </span>
-                        <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
-                      </Button>
-                    </PopoverTrigger>
-                    <PopoverContent
-                      align="start"
-                      className="w-[var(--radix-popover-trigger-width)] p-2"
-                    >
-                      <div className="mb-2 flex items-center gap-2">
-                        <Input
-                          value={clientSearch}
-                          onChange={(event) => setClientSearch(event.target.value)}
-                          placeholder="Buscar cliente..."
-                          className="h-8"
-                        />
-                        {clientIds.length > 0 && (
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="icon"
-                            className="h-8 w-8 shrink-0"
-                            onClick={() => setClientIds([])}
-                            title="Limpar seleção"
-                          >
-                            <X className="h-4 w-4" />
-                          </Button>
-                        )}
-                      </div>
-                      <label className="mb-1 flex cursor-pointer items-center gap-2 border-b px-2 py-2 text-sm font-medium">
-                        <Checkbox
-                          checked={
-                            activeClients.length > 0 && clientIds.length === activeClients.length
-                              ? true
-                              : clientIds.length > 0
-                                ? "indeterminate"
-                                : false
-                          }
-                          onCheckedChange={(checked) =>
-                            setClientIds(
-                              checked === true ? activeClients.map((client) => client.id) : [],
-                            )
-                          }
-                        />
-                        <span>Selecionar todos</span>
-                        <span className="ml-auto text-xs text-muted-foreground">
-                          {clientIds.length}/{activeClients.length}
-                        </span>
-                      </label>
-                      <div className="max-h-64 overflow-y-auto overscroll-contain">
-                        {filteredClients.length === 0 ? (
-                          <p className="px-2 py-4 text-center text-sm text-muted-foreground">
-                            Nenhum cliente encontrado
-                          </p>
-                        ) : (
-                          filteredClients.map((client) => (
-                            <label
-                              key={client.id}
-                              className="flex cursor-pointer items-center gap-2 rounded px-2 py-2 text-sm hover:bg-accent"
-                            >
-                              <Checkbox
-                                checked={clientIds.includes(client.id)}
-                                onCheckedChange={() => toggleClient(client.id)}
-                              />
-                              <span className="truncate">{client.name}</span>
-                            </label>
-                          ))
-                        )}
-                      </div>
-                    </PopoverContent>
-                  </Popover>
-                )}
-                {!obligation && clientIds.length > 1 && (
-                  <p className="text-[11px] text-muted-foreground">
-                    Será criada uma série de tarefas para cada cliente selecionado.
-                  </p>
-                )}
               </div>
               <div className="space-y-2">
                 <Label>Responsável</Label>

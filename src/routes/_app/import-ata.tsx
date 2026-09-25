@@ -2,14 +2,7 @@ import { createFileRoute } from "@tanstack/react-router";
 import { useServerFn } from "@tanstack/react-start";
 import { useMemo, useState } from "react";
 import { useAuth } from "@/hooks/use-auth";
-import {
-  useClients,
-  useColumns,
-  useProfiles,
-  useTaskTags,
-  useTaskStatuses,
-} from "@/hooks/use-data";
-import { supabase } from "@/integrations/supabase/client";
+import { useColumns, useProfiles, useTaskTags, useTaskStatuses } from "@/hooks/use-data";
 import { useQueryClient } from "@tanstack/react-query";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -70,7 +63,6 @@ function ImportAtaPage() {
   const { user } = useAuth();
   const qc = useQueryClient();
   const { data: profiles = [] } = useProfiles();
-  const { data: clients = [] } = useClients();
   const { data: tags = [] } = useTaskTags();
   const { data: statuses = [] } = useTaskStatuses();
   const { data: columns = [] } = useColumns();
@@ -86,10 +78,7 @@ function ImportAtaPage() {
   const [creating, setCreating] = useState(false);
   const [formatting, setFormatting] = useState(false);
   const [ataHtml, setAtaHtml] = useState<string>("");
-  const [ataText, setAtaText] = useState<string>("");
   const [ataTitle, setAtaTitle] = useState<string>("");
-  const [saveClientId, setSaveClientId] = useState<string>("");
-  const [savingNote, setSavingNote] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
 
   const activeMembers = useMemo(
@@ -98,10 +87,6 @@ function ImportAtaPage() {
         .filter((p) => p.is_active !== false)
         .map((p) => ({ id: p.id, name: p.full_name || "Sem nome" })),
     [profiles],
-  );
-  const clientList = useMemo(
-    () => clients.filter((c) => c.is_active).map((c) => ({ id: c.id, name: c.name })),
-    [clients],
   );
   const tagList = useMemo(() => tags.map((t) => ({ id: t.id, name: t.name })), [tags]);
 
@@ -142,14 +127,12 @@ function ImportAtaPage() {
     try {
       const payload: {
         members: { id: string; name: string }[];
-        clients: { id: string; name: string }[];
         tags: { id: string; name: string }[];
         pdfBase64?: string;
         filename?: string;
         text?: string;
       } = {
         members: activeMembers,
-        clients: clientList,
         tags: tagList,
       };
       if (tab === "pdf" && file) {
@@ -196,7 +179,6 @@ function ImportAtaPage() {
       }
       const res = await runFormat({ data: payload });
       setAtaHtml(sanitizeRichHtml(res.html));
-      setAtaText(res.text);
       if (!ataTitle) {
         const today = new Date().toLocaleDateString("pt-BR");
         setAtaTitle(`Ata de Reunião — ${today}`);
@@ -206,38 +188,6 @@ function ImportAtaPage() {
       toast.error((e as Error).message);
     } finally {
       setFormatting(false);
-    }
-  };
-
-  const saveAtaAsNote = async () => {
-    if (!user) {
-      toast.error("Sessão expirada");
-      return;
-    }
-    if (!ataHtml) {
-      toast.error("Gere a ata primeiro");
-      return;
-    }
-    if (!saveClientId) {
-      toast.error("Selecione um cliente");
-      return;
-    }
-    setSavingNote(true);
-    try {
-      const { error } = await supabase.from("client_notes").insert({
-        client_id: saveClientId,
-        title: ataTitle || "Ata de Reunião",
-        content: ataText,
-        content_html: ataHtml,
-        created_by: user.id,
-      });
-      if (error) throw error;
-      toast.success("Ata salva nas anotações do cliente");
-      qc.invalidateQueries({ queryKey: ["client_notes"] });
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSavingNote(false);
     }
   };
 
@@ -350,8 +300,6 @@ function ImportAtaPage() {
         assignee_id: null,
         assignee_name: null,
         due_date: null,
-        client_id: null,
-        client_name: null,
         tag_id: null,
         tag_name: null,
         priority: "medium",
@@ -388,7 +336,6 @@ function ImportAtaPage() {
           priority: r.priority,
           due_date: r.due_date ? new Date(r.due_date + "T18:00:00").toISOString() : null,
           assignee_id: r.assignee_id,
-          client_id: r.client_id,
           tag_id: r.tag_id,
         };
       });
@@ -497,31 +444,6 @@ function ImportAtaPage() {
             dangerouslySetInnerHTML={{ __html: sanitizeRichHtml(ataHtml) }}
           />
           <div className="flex flex-wrap items-end gap-2">
-            <div className="flex-1 min-w-[200px]">
-              <div className="text-[11px] text-muted-foreground mb-1">
-                Salvar nas anotações do cliente
-              </div>
-              <Select value={saveClientId} onValueChange={setSaveClientId}>
-                <SelectTrigger>
-                  <SelectValue placeholder="Selecione o cliente" />
-                </SelectTrigger>
-                <SelectContent>
-                  {clientList.map((c) => (
-                    <SelectItem key={c.id} value={c.id}>
-                      {c.name}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <Button onClick={saveAtaAsNote} disabled={savingNote || !saveClientId}>
-              {savingNote ? (
-                <Loader2 className="h-4 w-4 mr-1 animate-spin" />
-              ) : (
-                <NotebookPen className="h-4 w-4 mr-1" />
-              )}
-              Salvar como Anotação
-            </Button>
             <Button variant="outline" onClick={downloadAtaPdf} disabled={exportingPdf}>
               {exportingPdf ? (
                 <Loader2 className="h-4 w-4 mr-1 animate-spin" />
@@ -534,7 +456,6 @@ function ImportAtaPage() {
               variant="ghost"
               onClick={() => {
                 setAtaHtml("");
-                setAtaText("");
               }}
             >
               Descartar
@@ -594,7 +515,7 @@ function ImportAtaPage() {
                       onChange={(e) => updateRow(r._id, { description: e.target.value })}
                       placeholder="Descrição"
                     />
-                    <div className="grid grid-cols-1 md:grid-cols-4 gap-2">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
                       <div>
                         <div className="text-[11px] text-muted-foreground mb-1">
                           Responsável{" "}
@@ -629,32 +550,6 @@ function ImportAtaPage() {
                           value={r.due_date ?? ""}
                           onChange={(e) => updateRow(r._id, { due_date: e.target.value || null })}
                         />
-                      </div>
-                      <div>
-                        <div className="text-[11px] text-muted-foreground mb-1">
-                          Cliente{" "}
-                          {r.client_name && !r.client_id ? (
-                            <span className="text-amber-600">({r.client_name})</span>
-                          ) : null}
-                        </div>
-                        <Select
-                          value={r.client_id ?? "none"}
-                          onValueChange={(v) =>
-                            updateRow(r._id, { client_id: v === "none" ? null : v })
-                          }
-                        >
-                          <SelectTrigger>
-                            <SelectValue placeholder="—" />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">— Sem cliente —</SelectItem>
-                            {clientList.map((c) => (
-                              <SelectItem key={c.id} value={c.id}>
-                                {c.name}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
                       </div>
                       <div>
                         <div className="text-[11px] text-muted-foreground mb-1">

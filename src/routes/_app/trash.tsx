@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { format } from "date-fns";
 import { supabase } from "@/integrations/supabase/client";
 import { Button } from "@/components/ui/button";
-import { useClients, useProfiles } from "@/hooks/use-data";
+import { useProfiles } from "@/hooks/use-data";
 import { useWorkspaceDeletedTasks } from "@/hooks/use-workspace-tasks";
 import { useAuth } from "@/hooks/use-auth";
 import { enqueueOfflineOperation, isOffline } from "@/lib/offline-sync";
@@ -17,7 +17,6 @@ export const Route = createFileRoute("/_app/trash")({
 function TrashPage() {
   const qc = useQueryClient();
   const { data: tasks = [], isLoading } = useWorkspaceDeletedTasks();
-  const { data: clients = [] } = useClients();
   const { data: profiles = [] } = useProfiles();
   const { user, isAdmin } = useAuth();
   const canDeleteTask = (task: (typeof tasks)[number]) =>
@@ -86,7 +85,6 @@ function TrashPage() {
             <thead className="bg-muted/50 text-xs uppercase text-muted-foreground">
               <tr>
                 <th className="px-3 py-2 text-left">Título</th>
-                <th className="px-3 py-2 text-left">Cliente</th>
                 <th className="px-3 py-2 text-left">Responsável</th>
                 <th className="px-3 py-2 text-left">Excluída em</th>
                 <th className="px-3 py-2 text-right">Ações</th>
@@ -94,12 +92,10 @@ function TrashPage() {
             </thead>
             <tbody>
               {tasks.map((t) => {
-                const c = clients.find((x) => x.id === t.client_id);
                 const a = profiles.find((p) => p.id === t.assignee_id);
                 return (
                   <tr key={t.id} className="border-t">
                     <td className="px-3 py-2 font-medium">{t.title}</td>
-                    <td className="px-3 py-2 text-muted-foreground">{c?.name ?? "—"}</td>
                     <td className="px-3 py-2 text-muted-foreground">{a?.full_name ?? a?.email ?? "—"}</td>
                     <td className="px-3 py-2 text-muted-foreground">
                       {t.deleted_at ? format(new Date(t.deleted_at), "dd/MM/yyyy HH:mm") : "—"}

@@ -7,20 +7,16 @@ import {
 } from "@/components/ui/select";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
-import { Checkbox } from "@/components/ui/checkbox";
-import { Input } from "@/components/ui/input";
 import { Badge } from "@/components/ui/badge";
 import {
-  ChevronDown,
-  X,
   Users,
   UserCheck,
   PenSquare,
   Filter as FilterIcon,
   RotateCcw,
 } from "lucide-react";
-import { useMemo, useState, type ReactNode } from "react";
-import { useAssignableProfiles, useClients, useColumns } from "@/hooks/use-data";
+import { useState, type ReactNode } from "react";
+import { useAssignableProfiles, useColumns } from "@/hooks/use-data";
 
 import { dateFilterLabels, matchDateFilter, type DateFilter } from "@/lib/task-utils";
 
@@ -31,8 +27,6 @@ const COLUMN_STATUS_PREFIX = "column:";
 interface Filters {
   scope?: TaskScope;
   date?: DateFilter;
-  client?: string; // legacy single-select (still respected)
-  clients?: string[]; // multi-select
   assignee?: string;
   priority?: string;
   status?: string;
@@ -63,61 +57,18 @@ export function TaskFilters({
   children?: ReactNode;
   hideAssignee?: boolean;
 }) {
-  const { data: clients } = useClients();
   // The assignee filter must only expose users who can receive tasks.
-  // This query is role-based in the database (admin and collaborator only),
-  // so future client accounts are excluded automatically as well.
+  // This query is role-based in the database (admin and collaborator only).
   const { data: assignableProfiles } = useAssignableProfiles();
   const { data: columns = [] } = useColumns();
-  const [clientsOpen, setClientsOpen] = useState(false);
   const [advancedOpen, setAdvancedOpen] = useState(false);
-  const [search, setSearch] = useState("");
 
   const scope: TaskScope = filters.scope ?? "all";
   const dateVal: DateFilter = filters.date ?? "all";
 
-  const selectedClients = useMemo<string[]>(() => {
-    if (filters.clients && filters.clients.length > 0) return filters.clients;
-    if (filters.client) return [filters.client];
-    return [];
-  }, [filters.clients, filters.client]);
-
-  const setSelectedClients = (ids: string[]) => {
-    onChange({ ...filters, clients: ids.length > 0 ? ids : undefined, client: undefined });
-  };
-
-  const toggleClient = (id: string) => {
-    setSelectedClients(
-      selectedClients.includes(id)
-        ? selectedClients.filter((c) => c !== id)
-        : [...selectedClients, id],
-    );
-  };
-
-  const activeClients = useMemo(
-    () => (clients ?? []).filter((client) => client.is_active),
-    [clients],
-  );
-  const filteredClients = useMemo(() => {
-    const q = search.trim().toLowerCase();
-    return q
-      ? activeClients.filter((client) => client.name.toLowerCase().includes(q))
-      : activeClients;
-  }, [activeClients, search]);
-
-  const allSelected = activeClients.length > 0 && selectedClients.length === activeClients.length;
-
-  const clientsLabel =
-    selectedClients.length === 0
-      ? "Clientes"
-      : selectedClients.length === 1
-        ? (clients?.find((c) => c.id === selectedClients[0])?.name ?? "1 cliente")
-        : `${selectedClients.length} clientes`;
-
   const activeCount = [
     scope !== "all",
     dateVal !== "all",
-    selectedClients.length > 0,
     !hideAssignee && !!filters.assignee,
     !!filters.priority,
     !!filters.status,
@@ -154,77 +105,6 @@ export function TaskFilters({
             </ScopeBtn>
           </div>
         </div>
-
-        {/* Clients multi */}
-        <Popover open={clientsOpen} onOpenChange={setClientsOpen}>
-          <PopoverTrigger asChild>
-            <Button variant="outline" size="sm" className="h-7 justify-between gap-1.5 rounded-full font-normal">
-              <span className="truncate max-w-40">{clientsLabel}</span>
-              {selectedClients.length > 0 && (
-                <Badge variant="secondary" className="h-5 px-1.5">
-                  {selectedClients.length}
-                </Badge>
-              )}
-              <ChevronDown className="h-4 w-4 opacity-50" />
-            </Button>
-          </PopoverTrigger>
-          <PopoverContent align="start" className="w-64 p-2">
-            <div className="flex items-center gap-2 mb-2">
-              <Input
-                placeholder="Buscar cliente..."
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="h-8"
-              />
-              {selectedClients.length > 0 && (
-                <Button
-                  variant="ghost"
-                  size="icon"
-                  className="h-8 w-8 shrink-0"
-                  onClick={() => setSelectedClients([])}
-                  title="Limpar seleção"
-                >
-                  <X className="h-4 w-4" />
-                </Button>
-              )}
-            </div>
-            <div className="flex items-center justify-between px-2 py-1.5 border-b mb-1">
-              <label className="flex items-center gap-2 text-sm cursor-pointer">
-                <Checkbox
-                  checked={allSelected}
-                  onCheckedChange={(v) => {
-                    if (v) setSelectedClients(activeClients.map((client) => client.id));
-                    else setSelectedClients([]);
-                  }}
-                />
-                <span>Selecionar todos</span>
-              </label>
-              <span className="text-xs text-muted-foreground">
-                {selectedClients.length}/{activeClients.length}
-              </span>
-            </div>
-            <div className="max-h-64 overflow-y-auto">
-              {filteredClients.length === 0 ? (
-                <div className="px-2 py-4 text-sm text-muted-foreground text-center">
-                  Nenhum cliente
-                </div>
-              ) : (
-                filteredClients.map((c) => (
-                  <label
-                    key={c.id}
-                    className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-accent cursor-pointer text-sm"
-                  >
-                    <Checkbox
-                      checked={selectedClients.includes(c.id)}
-                      onCheckedChange={() => toggleClient(c.id)}
-                    />
-                    <span className="truncate">{c.name}</span>
-                  </label>
-                ))
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
 
         {!hideAssignee && (
           <Select
@@ -371,7 +251,6 @@ function ScopeBtn({
 export function applyTaskFilters<
   T extends {
     id: string;
-    client_id: string | null;
     assignee_id: string | null;
     priority: string | null;
     column_id: string | null;
@@ -395,7 +274,6 @@ export function applyTaskFilters<
     restrictToCurrentUserParticipation?: boolean;
   },
 ) {
-  const clientIds = f.clients && f.clients.length > 0 ? f.clients : f.client ? [f.client] : null;
   const uid = opts?.userId ?? null;
   const subIds = opts?.subtaskAssigneeTaskIds ?? null;
   const collaboratorIds = opts?.collaboratorTaskIds ?? null;
@@ -430,7 +308,6 @@ export function applyTaskFilters<
       ].includes(f.date);
       if (!supportsSubtaskDueDates || !opts?.subtaskDateFilterTaskIds?.has(t.id)) return false;
     }
-    if (clientIds && (!t.client_id || !clientIds.includes(t.client_id))) return false;
     if (f.assignee) {
       const assigneeSubtasks = opts?.subtaskAssigneeTaskIdsByUser?.get(f.assignee);
       // When filtering by the logged-in user, include direct assignments,

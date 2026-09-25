@@ -2,7 +2,7 @@ import { createFileRoute, Navigate } from "@tanstack/react-router";
 import { useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useAuth } from "@/hooks/use-auth";
-import { useProfiles, useClients, useTaskStatuses } from "@/hooks/use-data";
+import { useProfiles, useTaskStatuses } from "@/hooks/use-data";
 import { useWorkspaceTasks } from "@/hooks/use-workspace-tasks";
 import { supabase } from "@/integrations/supabase/client";
 import { Card } from "@/components/ui/card";
@@ -43,8 +43,6 @@ import {
   User as UserIcon,
   ListChecks,
   Flame,
-  ShieldAlert,
-  Swords,
   Trophy,
   Crown,
   Activity,
@@ -107,22 +105,6 @@ function Kpi({
   );
 }
 
-type ClientPerformance = {
-  id: string;
-  name: string;
-  people: number;
-  total: number;
-  done: number;
-  pending: number;
-  overdue: number;
-  unassigned: number;
-  onTimeRate: number;
-  score: number;
-  strongPoint: string;
-  blocker: string;
-  contributors: Array<{ name: string; done: number; pending: number; overdue: number }>;
-};
-
 type DueDateChangeReport = {
   id: string;
   task_id: string;
@@ -140,8 +122,6 @@ type ServiceRequestReport = {
   created_at: string;
   resolved_at: string | null;
 };
-
-const battleColors = ["#5d6e3e", "#ec643f", "#f5b751", "#626161", "#94a56f", "#d8d2c4"];
 
 const currentMonthPeriod = () => {
   const today = new Date();
@@ -398,97 +378,12 @@ function LateTasksDialog({
   );
 }
 
-function ClientBattlePanel({ clients }: { clients: ClientPerformance[] }) {
-  if (clients.length === 0) return null;
-
-  return (
-    <section className="overflow-hidden rounded-lg border bg-card shadow-sm">
-      <div className="flex flex-wrap items-center justify-between gap-3 border-b px-5 py-5">
-        <h2 className="flex items-center gap-2 text-xl font-semibold tracking-tight">
-          <Swords className="h-5 w-5 text-[#5d6e3e]" /> Desempenho por cliente
-        </h2>
-        <p className="text-sm text-muted-foreground">
-          Score composto de entregas, prazo e pendências — evita que só o volume distorça a leitura.
-        </p>
-      </div>
-
-      <div className="divide-y px-5">
-        {clients.map((client, index) => {
-          const color = battleColors[index] ?? "#c6d1de";
-          return (
-            <article key={client.id} className="py-5">
-              <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-2">
-                  {index === 0 ? (
-                    <Trophy className="h-5 w-5 text-[#f59e0b]" />
-                  ) : (
-                    <span className="grid h-5 w-5 place-items-center rounded-full bg-muted text-[11px] font-semibold text-muted-foreground">
-                      {index + 1}
-                    </span>
-                  )}
-                  <h3 className="text-lg font-semibold">{client.name}</h3>
-                  <span className="rounded-full border px-2.5 py-1 text-xs text-muted-foreground">
-                    {client.people} {client.people === 1 ? "pessoa" : "pessoas"}
-                  </span>
-                </div>
-                <div className="flex items-center gap-3 text-sm">
-                  <span className="font-medium text-[#5d6e3e]">{client.onTimeRate}% no prazo</span>
-                  <span className="text-lg font-bold tabular-nums">{client.score}/100</span>
-                </div>
-              </div>
-              <div className="h-5 overflow-hidden rounded-full bg-muted">
-                <div
-                  className="h-full rounded-full transition-[width]"
-                  style={{ width: `${Math.max(client.score, 1)}%`, backgroundColor: color }}
-                />
-              </div>
-              <div className="mt-3 space-y-1.5 text-sm text-muted-foreground">
-                <p>
-                  <Flame className="mr-1 inline h-4 w-4 text-emerald-600" />
-                  <span className="font-semibold text-emerald-600">Ponto forte:</span>{" "}
-                  {client.strongPoint}
-                </p>
-                <p>
-                  <ShieldAlert className="mr-1 inline h-4 w-4 text-rose-500" />
-                  <span className="font-semibold text-rose-500">O que travou:</span>{" "}
-                  {client.blocker}
-                </p>
-              </div>
-              <div className="mt-4 rounded-md border bg-muted/20 px-3 py-2">
-                <p className="mb-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                  Participação por consultor
-                </p>
-                <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-                  {client.contributors.map((contributor) => (
-                    <div
-                      key={contributor.name}
-                      className="rounded-md bg-background px-3 py-2 text-sm"
-                    >
-                      <p className="truncate font-medium">{contributor.name}</p>
-                      <p className="mt-1 text-xs text-muted-foreground">
-                        <span className="text-emerald-600">{contributor.done} concluídas</span> ·{" "}
-                        <span className="text-amber-600">{contributor.pending} pendentes</span> ·{" "}
-                        <span className="text-rose-600">{contributor.overdue} atrasadas</span>
-                      </p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-    </section>
-  );
-}
-
 function MonthlyBriefingPanel({
   periodLabel,
   totals,
   created,
   previousCompleted,
   team,
-  clients,
   peopleWithoutDeadline,
 }: {
   periodLabel: string;
@@ -496,13 +391,10 @@ function MonthlyBriefingPanel({
   created: number;
   previousCompleted: number;
   team: any[];
-  clients: ClientPerformance[];
   peopleWithoutDeadline: Array<{ id: string; name: string; tasks: any[] }>;
 }) {
   const topDelivery = [...team].sort((a, b) => b.done - a.done)[0];
   const highestLoad = [...team].sort((a, b) => b.pending - a.pending)[0];
-  const strongestClient = clients[0];
-  const attentionClient = [...clients].sort((a, b) => a.score - b.score)[0];
   const change = totals.done - previousCompleted;
 
   return (
@@ -542,7 +434,7 @@ function MonthlyBriefingPanel({
         </div>
       </Card>
 
-      <div className="grid gap-4 xl:grid-cols-3">
+      <div className="grid gap-4 xl:grid-cols-2">
         <Card className="p-5">
           <p className="flex items-center gap-2 text-sm font-semibold">
             <TrendingUp className="h-4 w-4 text-emerald-600" /> Equipe
@@ -565,31 +457,6 @@ function MonthlyBriefingPanel({
           ) : (
             <p className="mt-4 text-sm text-muted-foreground">
               Ainda não há dados de equipe no período.
-            </p>
-          )}
-        </Card>
-        <Card className="p-5">
-          <p className="flex items-center gap-2 text-sm font-semibold">
-            <Trophy className="h-4 w-4 text-amber-500" /> Clientes
-          </p>
-          {strongestClient ? (
-            <div className="mt-4 space-y-3 text-sm">
-              <p>
-                <span className="text-muted-foreground">Melhor desempenho:</span>
-                <br />
-                <strong className="text-base">{strongestClient.name}</strong> ·{" "}
-                {strongestClient.onTimeRate}% no prazo.
-              </p>
-              <p>
-                <span className="text-muted-foreground">Cliente para acompanhar:</span>
-                <br />
-                <strong className="text-base">{attentionClient?.name}</strong> ·{" "}
-                {attentionClient?.blocker}
-              </p>
-            </div>
-          ) : (
-            <p className="mt-4 text-sm text-muted-foreground">
-              Ainda não há clientes com demandas no período.
             </p>
           )}
         </Card>
@@ -687,67 +554,6 @@ function MonthlyBriefingPanel({
         )}
       </section>
 
-      <section>
-        <div className="mb-3 flex flex-wrap items-end justify-between gap-3">
-          <div>
-            <h3 className="flex items-center gap-2 text-lg font-semibold">
-              <Swords className="h-5 w-5 text-[#5d6e3e]" /> Leitura por cliente
-            </h3>
-            <p className="mt-1 text-sm text-muted-foreground">
-              Visão compacta da saúde de cada conta, sem precisar abrir cliente por cliente.
-            </p>
-          </div>
-          <Badge variant="outline">{clients.length} cliente(s) com demanda</Badge>
-        </div>
-        {clients.length ? (
-          <div className="grid gap-4 md:grid-cols-2 2xl:grid-cols-3">
-            {clients.map((client) => (
-              <Card key={client.id} className="overflow-hidden">
-                <div className="flex items-start justify-between gap-3 border-b px-5 py-4">
-                  <div className="min-w-0">
-                    <p className="truncate font-semibold">{client.name}</p>
-                    <p className="mt-1 text-sm text-muted-foreground">
-                      {client.people} pessoa(s) envolvida(s)
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <p className="text-2xl font-bold text-[#5d6e3e]">{client.score}</p>
-                    <p className="text-[11px] text-muted-foreground">saúde / 100</p>
-                  </div>
-                </div>
-                <div className="grid grid-cols-3 divide-x text-center">
-                  <div className="p-3">
-                    <p className="text-xl font-bold text-emerald-600">{client.done}</p>
-                    <p className="text-[11px] text-muted-foreground">entregas</p>
-                  </div>
-                  <div className="p-3">
-                    <p className="text-xl font-bold text-amber-600">{client.pending}</p>
-                    <p className="text-[11px] text-muted-foreground">abertas</p>
-                  </div>
-                  <div className="p-3">
-                    <p className="text-xl font-bold text-rose-600">{client.overdue}</p>
-                    <p className="text-[11px] text-muted-foreground">atrasadas</p>
-                  </div>
-                </div>
-                <div className="space-y-1.5 bg-muted/30 px-5 py-3 text-sm">
-                  <p>
-                    <span className="font-medium text-emerald-700">Ponto forte:</span>{" "}
-                    {client.strongPoint}
-                  </p>
-                  <p>
-                    <span className="font-medium text-rose-700">Atenção:</span> {client.blocker}
-                  </p>
-                </div>
-              </Card>
-            ))}
-          </div>
-        ) : (
-          <Card className="p-5 text-sm text-muted-foreground">
-            Não há clientes com demandas neste período.
-          </Card>
-        )}
-      </section>
-
       <p className="px-1 text-xs text-muted-foreground">
         Prévia do briefing automático mensal. No fechamento, a IA usará essas métricas para produzir
         uma análise editorial salva do período.
@@ -760,7 +566,6 @@ function ReportsPage() {
   const { isAdmin, hasPermission, loading, activeWorkspace } = useAuth();
   const { data: tasks = [] } = useWorkspaceTasks();
   const { data: profiles = [] } = useProfiles();
-  const { data: clients = [] } = useClients();
   const { data: statuses = [] } = useTaskStatuses();
   const { data: subtasks = [] } = useQuery({
     queryKey: ["subtasks_all"],
@@ -812,9 +617,9 @@ function ReportsPage() {
   const [period, setPeriod] = useState(previousMonthPeriod);
   const [userFilter, setUserFilter] = useState<string>("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("active");
-  const [reportView, setReportView] = useState<
-    "briefing" | "summary" | "operations" | "clients" | "team"
-  >("briefing");
+  const [reportView, setReportView] = useState<"briefing" | "summary" | "operations" | "team">(
+    "briefing",
+  );
   const [lateTasksMember, setLateTasksMember] = useState<any | null>(null);
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Carregando…</div>;
@@ -824,8 +629,8 @@ function ReportsPage() {
     const active = p.is_active !== false;
     return statusFilter === "all" || (statusFilter === "active" ? active : !active);
   };
-  // Client accounts can access the portal, but are never collaborators and
-  // therefore must not be included in user report filters, charts or tables.
+  // Contas legadas com a categoria "client" (portal descontinuado) não são
+  // colaboradores e ficam fora dos filtros, gráficos e tabelas de usuários.
   const clientUserIds = new Set(
     roles
       .filter((role: { role: string }) => role.role === "client")
@@ -999,101 +804,6 @@ function ReportsPage() {
         subtasksTotal: sub.total,
       };
     });
-
-  const byClient = clients
-    .map((client) => {
-      const clientTasks = filteredTasks.filter((task) => task.client_id === client.id);
-      const concluded = clientTasks.filter((task) => task.status === "done").length;
-      const overdue = clientTasks.filter(isOverdue).length;
-      return {
-        name: client.name,
-        concluídas: concluded,
-        emAberto: clientTasks.length - concluded - overdue,
-        atrasadas: overdue,
-        total: clientTasks.length,
-      };
-    })
-    .filter((client) => client.total > 0)
-    .sort((a, b) => b.total - a.total);
-
-  const clientPerformance: ClientPerformance[] = clients
-    .map((client) => {
-      const clientTasks = filteredTasks.filter((task) => task.client_id === client.id);
-      if (clientTasks.length === 0) return null;
-
-      const doneTasks = clientTasks.filter((task) => task.status === "done");
-      const overdue = clientTasks.filter(isOverdue).length;
-      const unassigned = clientTasks.filter((task) => !task.assignee_id).length;
-      const people = new Set(clientTasks.map((task) => task.assignee_id).filter(Boolean)).size;
-      const completedWithDeadline = doneTasks.filter((task) => task.due_date && task.completed_at);
-      const onTime = completedWithDeadline.filter(
-        (task) =>
-          task.due_date &&
-          task.completed_at &&
-          !completedAfterDueDate(task.completed_at, task.due_date),
-      ).length;
-      const onTimeRate = completedWithDeadline.length
-        ? Math.round((onTime / completedWithDeadline.length) * 100)
-        : 0;
-      const completionRate = Math.round((doneTasks.length / clientTasks.length) * 100);
-      const score = Math.max(
-        0,
-        Math.min(
-          100,
-          Math.round(
-            completionRate * 0.55 +
-              onTimeRate * 0.3 +
-              Math.min(15, clientTasks.length * 3) -
-              overdue * 5,
-          ),
-        ),
-      );
-      const pending = clientTasks.length - doneTasks.length;
-      const strongPoint = doneTasks.length
-        ? `${doneTasks.length} ${doneTasks.length === 1 ? "tarefa concluída" : "tarefas concluídas"}, ${onTimeRate}% das entregas no prazo.`
-        : `${clientTasks.length} ${clientTasks.length === 1 ? "tarefa acompanhada" : "tarefas acompanhadas"} no período.`;
-      const blocker = overdue
-        ? `${overdue} ${overdue === 1 ? "tarefa atrasada" : "tarefas atrasadas"}.`
-        : unassigned
-          ? `${unassigned} ${unassigned === 1 ? "tarefa sem responsável" : "tarefas sem responsável"}.`
-          : pending
-            ? `${pending} ${pending === 1 ? "tarefa pendente" : "tarefas pendentes"}.`
-            : "Nenhum bloqueio identificado no período.";
-      const contributors = Array.from(
-        new Set(clientTasks.map((task) => task.assignee_id ?? "__unassigned__")),
-      )
-        .map((assigneeId) => {
-          const consultantTasks = clientTasks.filter(
-            (task) => (task.assignee_id ?? "__unassigned__") === assigneeId,
-          );
-          const profile = profiles.find((item) => item.id === assigneeId);
-          return {
-            name: profile?.full_name || profile?.email || "Sem responsável",
-            done: consultantTasks.filter((task) => task.status === "done").length,
-            pending: consultantTasks.filter((task) => task.status !== "done").length,
-            overdue: consultantTasks.filter(isOverdue).length,
-          };
-        })
-        .sort((a, b) => b.done + b.pending - (a.done + a.pending));
-
-      return {
-        id: client.id,
-        name: client.name,
-        people: people || 1,
-        total: clientTasks.length,
-        done: doneTasks.length,
-        pending,
-        overdue,
-        unassigned,
-        onTimeRate,
-        score,
-        strongPoint,
-        blocker,
-        contributors,
-      };
-    })
-    .filter((client): client is ClientPerformance => Boolean(client))
-    .sort((a, b) => b.score - a.score || b.total - a.total);
 
   const admins = perUser.filter((u) => u.isAdmin);
   const members = perUser.filter((u) => !u.isAdmin);
@@ -1294,7 +1004,6 @@ function ReportsPage() {
           ["briefing", "Briefing mensal"],
           ["summary", "Resumo"],
           ["operations", "Operação"],
-          ["clients", "Desempenho por cliente"],
           ["team", "Ranking da equipe"],
         ].map(([id, label]) => (
           <button
@@ -1335,13 +1044,8 @@ function ReportsPage() {
           created={createdInPeriod}
           previousCompleted={completedInPreviousPeriod}
           team={perUser}
-          clients={clientPerformance}
           peopleWithoutDeadline={peopleWithoutDeadline}
         />
-      </div>
-
-      <div className={reportView === "clients" ? "block" : "hidden"}>
-        <ClientBattlePanel clients={clientPerformance} />
       </div>
 
       <div className={reportView === "operations" ? "space-y-4" : "hidden"}>
@@ -1523,7 +1227,7 @@ function ReportsPage() {
         </div>
       </div>
 
-      <div className={reportView === "summary" ? "grid gap-4 lg:grid-cols-2" : "hidden"}>
+      <div className={reportView === "summary" ? "block" : "hidden"}>
         <Card className="p-4">
           <h3 className="mb-3 font-semibold">Comparativo por usuário</h3>
           <div className="h-72">
@@ -1541,71 +1245,12 @@ function ReportsPage() {
             </ResponsiveContainer>
           </div>
         </Card>
-        <Card className="p-4">
-          <div className="mb-1 flex items-baseline justify-between gap-3">
-            <h3 className="font-semibold">Atividades por cliente</h3>
-            <span className="text-xs text-muted-foreground">Conclusão × pendências</span>
-          </div>
-          <p className="mb-3 text-xs text-muted-foreground">
-            Comparativo de atividades concluídas, em aberto e atrasadas para cada cliente.
-          </p>
-          <div className="h-72">
-            {byClient.length === 0 ? (
-              <div className="grid h-full place-items-center text-sm text-muted-foreground">
-                Sem dados no período
-              </div>
-            ) : (
-              <ResponsiveContainer>
-                <BarChart
-                  data={byClient}
-                  layout="vertical"
-                  margin={{ top: 4, right: 12, left: 10, bottom: 0 }}
-                >
-                  <CartesianGrid
-                    horizontal={false}
-                    strokeDasharray="3 3"
-                    stroke="hsl(var(--border))"
-                  />
-                  <XAxis type="number" allowDecimals={false} fontSize={11} />
-                  <YAxis type="category" dataKey="name" width={112} tick={{ fontSize: 11 }} />
-                  <Tooltip cursor={{ fill: "hsl(var(--muted))", fillOpacity: 0.45 }} />
-                  <Legend iconType="circle" wrapperStyle={{ fontSize: 11 }} />
-                  <Bar
-                    dataKey="concluídas"
-                    name="Concluídas"
-                    stackId="atividade"
-                    fill="#059669"
-                    radius={[0, 0, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="emAberto"
-                    name="Em aberto"
-                    stackId="atividade"
-                    fill="#2563eb"
-                    radius={[0, 0, 0, 0]}
-                  />
-                  <Bar
-                    dataKey="atrasadas"
-                    name="Atrasadas"
-                    stackId="atividade"
-                    fill="#dc2626"
-                    radius={[0, 4, 4, 0]}
-                  />
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </div>
-        </Card>
       </div>
 
       <div className={reportView === "team" ? "space-y-4" : "hidden"}>
         <TeamRankingPanel members={teamRanking} onViewLateTasks={setLateTasksMember} />
         <UserTable title="Administradores" icon={ShieldCheck} rows={admins} />
         <UserTable title="Colaboradores" rows={members} icon={UserIcon} />
-      </div>
-
-      <div className={reportView === "summary" ? "block" : "hidden"}>
-        <ClientByUserTable clients={clients} users={perUser} tasks={filteredTasks} />
       </div>
 
       <LateTasksDialog
@@ -1682,90 +1327,6 @@ function UserTable({
           </table>
         </div>
       )}
-    </Card>
-  );
-}
-
-function ClientByUserTable({
-  clients,
-  users,
-  tasks,
-}: {
-  clients: any[];
-  users: any[];
-  tasks: any[];
-}) {
-  const activeClients = clients.filter((c) => tasks.some((t) => t.client_id === c.id));
-  if (activeClients.length === 0) {
-    return (
-      <Card className="p-4">
-        <h3 className="mb-2 font-semibold">Demandas por cliente × usuário</h3>
-        <p className="text-sm text-muted-foreground">Sem demandas com cliente no período.</p>
-      </Card>
-    );
-  }
-  return (
-    <Card className="p-4">
-      <h3 className="mb-3 font-semibold">Demandas por cliente × usuário</h3>
-      <p className="mb-3 text-xs text-muted-foreground">
-        Quantidade de tarefas atribuídas a cada usuário, agrupadas por cliente. "Concl." =
-        concluídas.
-      </p>
-      <div className="overflow-x-auto">
-        <table className="w-full text-sm">
-          <thead>
-            <tr className="border-b text-left text-xs uppercase text-muted-foreground">
-              <th className="py-2 pr-3">Cliente</th>
-              {users.map((u) => (
-                <th key={u.id} className="py-2 px-2 text-center">
-                  <div className="flex flex-col items-center">
-                    <span>{u.name}</span>
-                    <span className="text-[10px] font-normal text-muted-foreground">
-                      {u.isAdmin ? "admin" : "colaborador"}
-                    </span>
-                  </div>
-                </th>
-              ))}
-              <th className="py-2 px-2 text-center">Total</th>
-            </tr>
-          </thead>
-          <tbody>
-            {activeClients.map((c) => {
-              const clientTasks = tasks.filter((t) => t.client_id === c.id);
-              return (
-                <tr key={c.id} className="border-b last:border-b-0">
-                  <td className="py-2 pr-3">
-                    <div className="flex items-center gap-2">
-                      <span
-                        className="h-2.5 w-2.5 rounded-full"
-                        style={{ background: c.color || "#5d6e3e" }}
-                      />
-                      <span className="font-medium">{c.name}</span>
-                    </div>
-                  </td>
-                  {users.map((u) => {
-                    const ut = clientTasks.filter((t) => t.assignee_id === u.id);
-                    const done = ut.filter((t) => t.status === "done").length;
-                    return (
-                      <td key={u.id} className="py-2 px-2 text-center">
-                        {ut.length === 0 ? (
-                          <span className="text-muted-foreground">—</span>
-                        ) : (
-                          <span>
-                            <span className="font-medium">{ut.length}</span>
-                            <span className="ml-1 text-xs text-emerald-600">({done} concl.)</span>
-                          </span>
-                        )}
-                      </td>
-                    );
-                  })}
-                  <td className="py-2 px-2 text-center font-semibold">{clientTasks.length}</td>
-                </tr>
-              );
-            })}
-          </tbody>
-        </table>
-      </div>
     </Card>
   );
 }

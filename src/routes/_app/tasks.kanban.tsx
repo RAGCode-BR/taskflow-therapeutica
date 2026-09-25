@@ -39,7 +39,6 @@ import {
   Pencil,
   Trash2,
   GripVertical,
-  FolderOpen,
   ArrowUp,
   ArrowDown,
   FileDown,
@@ -56,7 +55,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { ClientFilesSheet } from "@/components/ClientFilesSheet";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -77,7 +75,6 @@ import { useAuth } from "@/hooks/use-auth";
 import {
   useTasks,
   useColumns,
-  useClients,
   useProfiles,
   useTaskTags,
   useTaskStatuses,
@@ -113,7 +110,6 @@ function SortableTaskCard({
   colId,
   onEdit,
   onDuplicate,
-  clients,
   profiles,
   columns,
   tags,
@@ -151,7 +147,6 @@ function SortableTaskCard({
       <TaskCard
         task={task}
         columns={columns}
-        clients={clients}
         profiles={profiles}
         tags={tags}
         statuses={statuses}
@@ -375,7 +370,6 @@ function KanbanPage() {
   const { data: rawColumns = [] } = useColumns();
   const { data: userColOrder = [] } = useUserColumnOrder();
   const { data: userTaskOrder = [] } = useUserTaskOrder();
-  const { data: clients = [] } = useClients();
   const { data: profiles = [] } = useProfiles();
   const { data: tags = [] } = useTaskTags();
   const { data: statuses = [] } = useTaskStatuses();
@@ -499,7 +493,6 @@ function KanbanPage() {
   const [duplicateDueDate, setDuplicateDueDate] = useState("");
   const [duplicatingTask, setDuplicatingTask] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false);
-  const [filesOpen, setFilesOpen] = useState(false);
   const [exportingPdf, setExportingPdf] = useState(false);
   const [completedRange, setCompletedRange] = useState<{ start: string; end: string }>({
     start: "",
@@ -1130,7 +1123,6 @@ function KanbanPage() {
     });
 
     const renderTask = (t: Task) => {
-      const client = clients.find((c) => c.id === t.client_id);
       const assignee = profiles.find((p) => p.id === t.assignee_id);
       const taskTags = tagsByTask.get(t.id) ?? [];
       const due = t.due_date ? format(new Date(t.due_date), "dd/MM/yyyy") : "";
@@ -1141,7 +1133,6 @@ function KanbanPage() {
           <div class="task-meta">
             <span class="prio" style="background:${prioColor[t.priority ?? "medium"]}">${prioLabel[t.priority ?? "medium"]}</span>
             ${due ? `<span class="meta-item">📅 ${due}</span>` : ""}
-            ${client ? `<span class="meta-item">🏢 ${esc(client.name)}</span>` : ""}
             ${assignee ? `<span class="meta-item">👤 ${esc(assignee.full_name || assignee.email || "")}</span>` : ""}
           </div>
           ${
@@ -1262,10 +1253,6 @@ function KanbanPage() {
       <header className="shrink-0 border-b bg-background px-3 py-2">
         <div className="flex items-center justify-end gap-2">
           <div className="flex flex-wrap gap-2">
-            <Button variant="outline" className="rounded-full" onClick={() => setFilesOpen(true)}>
-              <FolderOpen className="mr-2 h-4 w-4" />
-              Arquivos Cliente
-            </Button>
             <Button variant="outline" className="rounded-full" onClick={() => setTagsOpen(true)}>
               Etiquetas
             </Button>
@@ -1446,7 +1433,6 @@ function KanbanPage() {
                         task={t}
                         orientation={orientation}
                         disabled={sharedTaskIds.has(t.id)}
-                        clients={clients}
                         profiles={profiles}
                         columns={columns}
                         tags={tags}
@@ -1486,7 +1472,6 @@ function KanbanPage() {
                       task={t}
                       colId={COMPLETED_COL_ID}
                       orientation={orientation}
-                      clients={clients}
                       profiles={profiles}
                       columns={columns}
                       tags={tags}
@@ -1512,7 +1497,6 @@ function KanbanPage() {
               <div className="rotate-2 opacity-90">
                 <TaskCard
                   task={activeTask}
-                  clients={clients}
                   profiles={profiles}
                   columns={columns}
                   tags={tags}
@@ -1573,7 +1557,6 @@ function KanbanPage() {
         </DialogContent>
       </Dialog>
       <TagManagerDialog open={tagsOpen} onOpenChange={setTagsOpen} />
-      <ClientFilesSheet open={filesOpen} onOpenChange={setFilesOpen} />
 
       <Dialog
         open={columnEditor.open}

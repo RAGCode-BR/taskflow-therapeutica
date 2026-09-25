@@ -19,13 +19,7 @@ import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover
 import { cn } from "@/lib/utils";
 import { toast } from "sonner";
 import { useAuth } from "@/hooks/use-auth";
-import {
-  useProfiles,
-  useRelatedClients,
-  useTaskCollaborators,
-  useTasks,
-  type Profile,
-} from "@/hooks/use-data";
+import { useProfiles, useTaskCollaborators, useTasks, type Profile } from "@/hooks/use-data";
 import { TaskConversationPanel } from "@/components/TaskConversationPanel";
 import { supabase } from "@/integrations/supabase/client";
 import {
@@ -89,7 +83,6 @@ function ParticipantStack({ people }: { people: Profile[] }) {
 function ConversationsPage() {
   const { user, isAdmin } = useAuth();
   const { data: profiles = [] } = useProfiles();
-  const { data: relatedClients = [] } = useRelatedClients();
   const { data: allTasks = [] } = useTasks();
   const { data: myCollaborations = [] } = useTaskCollaborators();
   const { task: taskFromUrl } = Route.useSearch();
@@ -99,14 +92,13 @@ function ConversationsPage() {
     enabled: !!taskFromUrl,
     queryFn: async () => {
       const { data, error } = await (supabase.from("tasks") as any)
-        .select("id, title, client_id, conversation_closed_at")
+        .select("id, title, conversation_closed_at")
         .eq("id", taskFromUrl!)
         .single();
       if (error) throw error;
       return data as {
         id: string;
         title: string;
-        client_id: string | null;
         conversation_closed_at: string | null;
       };
     },
@@ -137,11 +129,6 @@ function ConversationsPage() {
     profiles.forEach((profile) => map.set(profile.id, profile));
     return map;
   }, [profiles]);
-
-  const clientNameById = useMemo(
-    () => new Map(relatedClients.map((client) => [client.id, client.name])),
-    [relatedClients],
-  );
 
   const lastMessageAtByTask = useMemo(() => {
     const map = new Map<string, string>();
@@ -239,7 +226,7 @@ function ConversationsPage() {
           const t =
             (taskFromUrl === selectedId ? directTask.data : undefined) ??
             allTasks.find((task) => task.id === selectedId);
-          return t ? { id: t.id, title: t.title, client_id: t.client_id } : null;
+          return t ? { id: t.id, title: t.title } : null;
         })()
       : null);
   const selectedTask = selectedId
@@ -316,7 +303,6 @@ function ConversationsPage() {
   };
 
   const selectedParticipants = selected ? (participantsByTask.get(selected.id) ?? []) : [];
-  const selectedClientName = selected?.client_id ? clientNameById.get(selected.client_id) : null;
   const nameOf = (id: string | null) =>
     (id && profileById.get(id)?.full_name) || (id && profileById.get(id)?.email) || "Alguém";
 
@@ -325,7 +311,6 @@ function ConversationsPage() {
     const last = list[list.length - 1];
     const unread = isRoomUnread(room.id);
     const active = selectedId === room.id;
-    const clientName = room.client_id ? clientNameById.get(room.client_id) : null;
     return (
       <ContextMenu key={room.id}>
         <ContextMenuTrigger asChild>
@@ -380,9 +365,6 @@ function ConversationsPage() {
                   <Check className="h-4 w-4" strokeWidth={2.5} />
                 </span>
               </div>
-              {clientName && (
-                <p className="line-clamp-1 text-xs font-medium text-primary/80">{clientName}</p>
-              )}
               {last && (
                 <p className="line-clamp-1 text-xs text-muted-foreground">
                   <span className="font-medium text-foreground/70">{nameOf(last.author_id)}</span>{" "}
@@ -580,11 +562,6 @@ function ConversationsPage() {
                   >
                     {selected.title}
                   </button>
-                  {selectedClientName && (
-                    <span className="block truncate text-xs font-medium text-primary/80">
-                      Cliente: {selectedClientName}
-                    </span>
-                  )}
                 </div>
                 {isSelectedConversationClosed && (
                   <Button

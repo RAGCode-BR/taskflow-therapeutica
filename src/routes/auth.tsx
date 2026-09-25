@@ -86,12 +86,12 @@ function AuthPage() {
             Tudo em um só lugar.
           </h1>
           <p className="mt-4 max-w-md text-sidebar-foreground/70">
-            Kanban, Lista e Calendário. Filtros inteligentes por prazo, cliente e responsável.
+            Kanban, Lista e Calendário. Filtros inteligentes por prazo e responsável.
           </p>
           <div className="mt-8 space-y-3">
             {[
               "Kanban totalmente editável com drag and drop",
-              "Filtros por prazo, cliente e responsável",
+              "Filtros por prazo e responsável",
               "Dashboard com gráficos de produtividade",
               "Anexos, comentários e subtarefas",
             ].map((text) => (
