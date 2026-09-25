@@ -333,7 +333,17 @@ Deno.serve(async (request) => {
     if (data.userId === authData.user.id)
       return response({ error: "Você não pode excluir seu próprio acesso." }, 400);
     const { error: deleteError } = await admin.auth.admin.deleteUser(data.userId);
-    if (deleteError) throw deleteError;
+    if (deleteError) {
+      console.error("Falha ao excluir usuário:", deleteError);
+      // O Auth só devolve "Database error deleting user" quando algum registro
+      // ainda impede apagar o perfil (chave estrangeira sem ON DELETE).
+      if (/database error deleting user/i.test(deleteError.message ?? ""))
+        return response({
+          error:
+            "Não foi possível excluir: este usuário ainda está vinculado a registros do sistema. Use \"Desativar acesso\" ou peça ao suporte para revisar os vínculos.",
+        });
+      throw deleteError;
+    }
     return response({ ok: true });
 
     return response({ error: "Ação inválida." }, 400);
