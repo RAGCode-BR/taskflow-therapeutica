@@ -6,7 +6,6 @@ import { useAuth } from "@/hooks/use-auth";
 
 export type ObligationFrequency = "daily" | "weekly" | "monthly";
 export type ObligationMonthRule = "specific_days" | "last_day" | "last_business_day";
-export type ObligationOccurrenceStatus = "scheduled" | "open" | "completed" | "skipped";
 
 export interface Obligation {
   id: string;
@@ -30,6 +29,8 @@ export interface Obligation {
   status_id: string | null;
   department_id: string | null;
   meeting_mode: boolean;
+  /** Dias de antecedência do aviso aos participantes. */
+  reminder_days_before: number;
   is_active: boolean;
   created_by: string;
   created_at: string;
@@ -49,7 +50,10 @@ export interface ObligationDepartment {
   updated_at: string;
 }
 
-/** Pauta que toda reunião gerada pela obrigação recebe automaticamente. */
+/** Em quais reuniões um item da pauta padrão entra. */
+export type AgendaCadence = "every" | "biweekly" | "first_of_month" | "last_of_month" | "until_day";
+
+/** Item da pauta padrão: é copiado para as reuniões conforme a periodicidade. */
 export interface ObligationTaskTemplate {
   id: string;
   obligation_id: string;
@@ -58,11 +62,16 @@ export interface ObligationTaskTemplate {
   assignee_id: string | null;
   priority: Obligation["priority"] | null;
   position: number;
+  cadence: AgendaCadence;
+  cadence_day: number | null;
   created_by: string | null;
   created_at: string;
   updated_at: string;
 }
 
+export type ObligationOccurrenceStatus = "scheduled" | "open" | "completed" | "skipped";
+
+/** Uma reunião gerada pela recorrência. */
 export interface ObligationOccurrence {
   id: string;
   workspace_id: string;
@@ -73,8 +82,45 @@ export interface ObligationOccurrence {
   task_id: string | null;
   completed_at: string | null;
   completed_by: string | null;
+  /** Quando a pauta foi copiada para a reunião; antes disso ela segue a pauta padrão. */
+  agenda_prepared_at: string | null;
+  reminded_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export type AgendaItemResult = "done" | "task";
+
+/** Item da pauta de uma reunião específica. */
+export interface ObligationAgendaItem {
+  id: string;
+  occurrence_id: string;
+  template_id: string | null;
+  title: string;
+  position: number;
+  result: AgendaItemResult | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+/** Pauta prevista de uma reunião que ainda não teve a pauta copiada. */
+export interface AgendaPreviewItem {
+  template_id: string;
+  title: string;
+  position: number;
+}
+
+export interface ObligationParticipant {
+  obligation_id: string;
+  user_id: string;
+}
+
+export interface DepartmentMember {
+  department_id: string;
+  user_id: string;
 }
 
 function useObligationRealtime() {
@@ -98,9 +144,14 @@ function useObligationRealtime() {
       .on(
         "postgres_changes",
         { event: "*", schema: "public", table: "obligation_occurrences" },
+        () => void queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+      )
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "obligation_agenda_items" },
         () => {
-          void queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] });
-          void queryClient.invalidateQueries({ queryKey: ["tasks"] });
+          void queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] });
+          void queryClient.invalidateQueries({ queryKey: ["obligation-agenda-preview"] });
         },
       )
       .subscribe();
@@ -145,6 +196,23 @@ export function useObligationTaskTemplates(obligationId: string | null | undefin
   });
 }
 
+/** Pautas fixas de todas as obrigações do ambiente, para exibir em cada reunião. */
+export function useAllObligationTaskTemplates() {
+  const { user, activeWorkspace } = useAuth();
+  return useQuery({
+    queryKey: ["obligation-task-templates", "all", activeWorkspace?.id],
+    enabled: !!user && !!activeWorkspace?.id,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("obligation_task_templates" as any) as any)
+        .select("*")
+        .order("position")
+        .order("created_at");
+      if (error) throw error;
+      return (data ?? []) as ObligationTaskTemplate[];
+    },
+  });
+}
+
 export function useObligations() {
   const { user, activeWorkspace } = useAuth();
   useObligationRealtime();
@@ -161,17 +229,17 @@ export function useObligations() {
   });
 }
 
+/** Reuniões de um ano para trás até seis meses à frente. */
 export function useObligationOccurrences() {
   const { user, activeWorkspace } = useAuth();
   return useQuery({
     queryKey: ["obligation-occurrences", activeWorkspace?.id],
     enabled: !!user && !!activeWorkspace?.id,
     queryFn: async () => {
-      const today = new Date();
-      const from = new Date(today);
+      const from = new Date();
       from.setFullYear(from.getFullYear() - 1);
-      const until = new Date(today);
-      until.setFullYear(until.getFullYear() + 2);
+      const until = new Date();
+      until.setMonth(until.getMonth() + 7);
       const { data, error } = await (supabase.from("obligation_occurrences" as any) as any)
         .select("*")
         .gte("due_date", from.toISOString().slice(0, 10))
@@ -179,6 +247,74 @@ export function useObligationOccurrences() {
         .order("due_date", { ascending: true });
       if (error) throw error;
       return (data ?? []) as ObligationOccurrence[];
+    },
+  });
+}
+
+/** Itens das pautas já copiadas para as reuniões (últimos 90 dias em diante). */
+export function useObligationAgendaItems() {
+  const { user, activeWorkspace } = useAuth();
+  return useQuery({
+    queryKey: ["obligation-agenda-items", activeWorkspace?.id],
+    enabled: !!user && !!activeWorkspace?.id,
+    queryFn: async () => {
+      const from = new Date();
+      from.setDate(from.getDate() - 90);
+      const { data, error } = await (supabase.from("obligation_agenda_items" as any) as any)
+        .select("*, obligation_occurrences!inner(due_date)")
+        .gte("obligation_occurrences.due_date", from.toISOString().slice(0, 10))
+        .order("position")
+        .order("created_at");
+      if (error) throw error;
+      return ((data ?? []) as Array<ObligationAgendaItem & { obligation_occurrences?: unknown }>).map(
+        ({ obligation_occurrences: _occurrence, ...item }) => item as ObligationAgendaItem,
+      );
+    },
+  });
+}
+
+/** Pauta prevista (calculada no banco a partir da pauta padrão e da periodicidade). */
+export function useObligationAgendaPreview(occurrenceId: string | null | undefined) {
+  const { user } = useAuth();
+  return useQuery({
+    queryKey: ["obligation-agenda-preview", occurrenceId],
+    enabled: !!user && !!occurrenceId,
+    queryFn: async () => {
+      const { data, error } = await (supabase as any).rpc("obligation_agenda_preview", {
+        target_occurrence_id: occurrenceId,
+      });
+      if (error) throw error;
+      return (data ?? []) as AgendaPreviewItem[];
+    },
+  });
+}
+
+export function useObligationParticipants() {
+  const { user, activeWorkspace } = useAuth();
+  return useQuery({
+    queryKey: ["obligation-participants", activeWorkspace?.id],
+    enabled: !!user && !!activeWorkspace?.id,
+    queryFn: async () => {
+      const { data, error } = await (supabase.from("obligation_participants" as any) as any).select(
+        "obligation_id, user_id",
+      );
+      if (error) throw error;
+      return (data ?? []) as ObligationParticipant[];
+    },
+  });
+}
+
+export function useDepartmentMembers() {
+  const { user, activeWorkspace } = useAuth();
+  return useQuery({
+    queryKey: ["obligation-department-members", activeWorkspace?.id],
+    enabled: !!user && !!activeWorkspace?.id,
+    queryFn: async () => {
+      const { data, error } = await (
+        supabase.from("obligation_department_members" as any) as any
+      ).select("department_id, user_id");
+      if (error) throw error;
+      return (data ?? []) as DepartmentMember[];
     },
   });
 }

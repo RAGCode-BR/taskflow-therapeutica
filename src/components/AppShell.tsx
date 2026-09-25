@@ -20,6 +20,7 @@ import {
   Layers3,
 } from "lucide-react";
 import { NotificationBell } from "@/components/NotificationBell";
+import { MeetingReminderPopup } from "@/components/MeetingReminderPopup";
 import { AssignmentPopup } from "@/components/AssignmentPopup";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import therapeuticaLogo from "@/assets/therapeutica-logo.png";
@@ -342,6 +343,7 @@ export function AppShell({ children }: { children: ReactNode }) {
         </div>
       )}
 
+      <MeetingReminderPopup />
       <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto md:pt-0 pt-12">
         <div className="hidden md:flex sticky top-0 z-30 justify-end gap-2 px-4 py-2 bg-background/80 backdrop-blur border-b">
           {canSwitchEnvironments && workspaces.length > 1 && (

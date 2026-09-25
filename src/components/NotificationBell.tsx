@@ -13,6 +13,7 @@ interface Notification {
   id: string;
   user_id: string;
   task_id: string | null;
+  obligation_occurrence_id?: string | null;
   type: string;
   title: string;
   body: string | null;
@@ -117,6 +118,10 @@ export function NotificationBell() {
   const openNotification = async (n: Notification) => {
     if (!n.is_read) await markRead(n.id);
     setOpen(false);
+    if (n.type === "obligation_meeting" && n.obligation_occurrence_id) {
+      navigate({ to: "/obligations", search: { meeting: n.obligation_occurrence_id } });
+      return;
+    }
     if (n.task_id) {
       navigate({ to: "/tasks/list", search: { task: n.task_id, mine: true } as any });
     } else {

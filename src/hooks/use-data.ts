@@ -46,6 +46,8 @@ export interface Task {
   conversation_closed_at?: string | null;
   /** Reunião/ocorrência da qual esta tarefa é uma pauta. */
   obligation_occurrence_id?: string | null;
+  obligation_template_id?: string | null;
+  obligation_agenda_item_id?: string | null;
   /** Ambiente dono da tarefa. Diverge do ativo quando ela chega por participação. */
   workspace_id?: string | null;
 }
@@ -69,67 +71,6 @@ export interface KanbanColumn {
   color: string | null;
   position: number;
   client_id: string | null;
-}
-export interface Client {
-  id: string;
-  name: string;
-  color: string | null;
-  description: string | null;
-  cnpj: string | null;
-  legal_name: string | null;
-  trade_name: string | null;
-  state_registration: string | null;
-  municipal_registration: string | null;
-  address: string | null;
-  phone: string | null;
-  email: string | null;
-  responsible: string | null;
-  avatar_path: string | null;
-  is_active: boolean;
-}
-export interface ClientDepartment {
-  id: string;
-  client_id: string;
-  name: string;
-  description: string | null;
-  position: number;
-  created_at: string;
-}
-export interface ClientDepartmentEmployee {
-  id: string;
-  department_id: string;
-  person_type: "individual" | "company";
-  full_name: string;
-  document: string | null;
-  cbo: string | null;
-  role: string | null;
-  salary: number | null;
-  salary_extrafolha: number | null;
-  activities: string | null;
-  avatar_path: string | null;
-  created_at: string;
-}
-export interface ClientSystemAccess {
-  id: string;
-  client_id: string;
-  title: string;
-  login: string;
-  password: string;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
-}
-export interface ClientBranch {
-  id: string;
-  client_id: string;
-  name: string;
-  cnpj: string | null;
-  address: string | null;
-  phone: string | null;
-  email: string | null;
-  notes: string | null;
-  created_at: string;
-  updated_at: string;
 }
 export interface Profile {
   id: string;
@@ -261,41 +202,6 @@ export interface TaskCollaborator {
   created_at: string;
 }
 
-export interface ClientInvoice {
-  id: string;
-  client_id: string;
-  description: string;
-  amount: number;
-  due_date: string;
-  status: "open" | "paid";
-  paid_at: string | null;
-  payment_method: "pix" | "boleto" | "link";
-  payment_link: string | null;
-  pix_key: string | null;
-  boleto_file_name: string | null;
-  boleto_storage_path: string | null;
-  boleto_mime_type: string | null;
-  invoice_file_name: string | null;
-  invoice_storage_path: string | null;
-  invoice_mime_type: string | null;
-  created_at: string;
-}
-
-export function useClientInvoices() {
-  return useQuery({
-    queryKey: ["client_invoices"],
-    queryFn: async () => {
-      // The generated Supabase types are refreshed separately; this cast keeps the
-      // new migration usable immediately in the application.
-      const { data, error } = await (supabase.from("client_invoices") as any)
-        .select("*")
-        .order("due_date", { ascending: true });
-      if (error) throw error;
-      return (data ?? []) as ClientInvoice[];
-    },
-  });
-}
-
 export function useTasks() {
   const { user } = useAuth();
   const userId = user?.id;
@@ -360,25 +266,6 @@ export function useTasks() {
     if (offlineKey && query.data) void set(offlineKey, query.data);
   }, [offlineKey, query.data]);
   return query;
-}
-
-export function useArchivedClientTasks(clientId: string, includeLegacyClientTasks = false) {
-  return useQuery({
-    queryKey: ["tasks", "archived", clientId, includeLegacyClientTasks],
-    enabled: !!clientId,
-    queryFn: async () => {
-      const { data, error } = await supabase
-        .from("tasks")
-        .select("*")
-        .eq("client_id", clientId)
-        .is("deleted_at", null)
-        .order("created_at", { ascending: false });
-      if (error) throw error;
-      return ((data ?? []) as Task[])
-        .filter((task) => includeLegacyClientTasks || !!task.archived_at)
-        .sort((a, b) => (b.archived_at ?? "").localeCompare(a.archived_at ?? ""));
-    },
-  });
 }
 
 export function useDeletedTasks() {
@@ -448,34 +335,6 @@ export function useUserTaskOrder() {
         .eq("user_id", uid);
       if (error) throw error;
       return (data ?? []) as UserTaskOrder[];
-    },
-  });
-}
-
-/**
- * Nome e cor dos clientes de todos os ambientes a que a pessoa pertence.
- * Serve apenas para exibição: uma tarefa lançada para o outro ambiente aponta
- * para o cliente de lá, que useClients() — restrito ao ambiente ativo — não
- * alcança. Os seletores continuam usando useClients(), de propósito.
- */
-export function useRelatedClients() {
-  return useQuery({
-    queryKey: ["related-clients"],
-    queryFn: async () => {
-      const { data, error } = await (supabase.rpc("list_related_client_names") as any);
-      if (error) throw error;
-      return (data ?? []) as Array<{ id: string; name: string; color: string | null }>;
-    },
-  });
-}
-
-export function useClients() {
-  return useQuery({
-    queryKey: ["clients"],
-    queryFn: async () => {
-      const { data, error } = await supabase.from("clients").select("*").order("name");
-      if (error) throw error;
-      return (data ?? []) as Client[];
     },
   });
 }

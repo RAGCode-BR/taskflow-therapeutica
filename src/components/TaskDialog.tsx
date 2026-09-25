@@ -67,7 +67,8 @@ interface Props {
   onOpenChange: (o: boolean) => void;
   task?: Task | null;
   defaultColumnId?: string | null;
-  obligationOccurrenceId?: string | null;
+  /** Item da pauta de reunião que originou a tarefa (um item pode gerar várias). */
+  agendaItemId?: string | null;
   defaults?: {
     title?: string;
     description?: string;
@@ -155,7 +156,7 @@ export function TaskDialog({
   onOpenChange,
   task,
   defaultColumnId,
-  obligationOccurrenceId,
+  agendaItemId,
   defaults,
 }: Props) {
   const navigate = useNavigate();
@@ -530,7 +531,7 @@ export function TaskDialog({
     const { error } = await authenticated.client.from("tasks").insert({
       id: taskId,
       ...buildPayload(),
-      obligation_occurrence_id: obligationOccurrenceId ?? null,
+      obligation_agenda_item_id: agendaItemId ?? null,
       workspace_id: targetWorkspaceId || null,
       created_by: authenticated.user.id,
     });
@@ -620,7 +621,7 @@ export function TaskDialog({
         created_at: now,
         updated_at: now,
         card_width: null,
-        obligation_occurrence_id: obligationOccurrenceId ?? null,
+        obligation_agenda_item_id: agendaItemId ?? null,
         workspace_id: targetWorkspaceId || activeWorkspace?.id || null,
       };
       await createTaskWithOfflineSupport({ userId: user.id, task: localTask, queryClient: qc });
@@ -757,7 +758,7 @@ export function TaskDialog({
         const { error } = await authenticated.client.from("tasks").insert({
           id: taskId,
           ...payload,
-          obligation_occurrence_id: obligationOccurrenceId ?? null,
+          obligation_agenda_item_id: agendaItemId ?? null,
           workspace_id: targetWorkspaceId || activeWorkspace?.id || null,
           created_by: authenticated.user.id,
         });

@@ -1,13 +1,16 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase types are regenerated after the migration is applied. */
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { Check, ChevronDown, Loader2, Plus, Trash2 } from "lucide-react";
+import { Check, ChevronDown, Loader2, Plus, Trash2, Users } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAssignableProfiles, useColumns, useTaskStatuses } from "@/hooks/use-data";
 import {
+  useDepartmentMembers,
   useObligationDepartments,
+  useObligationParticipants,
   useObligationTaskTemplates,
+  type AgendaCadence,
   type Obligation,
   type ObligationFrequency,
   type ObligationMonthRule,
@@ -52,10 +55,24 @@ const weekDays = [
   { value: 7, label: "Dom" },
 ];
 
+const cadenceOptions: Array<{ value: AgendaCadence; label: string }> = [
+  { value: "every", label: "Toda reunião" },
+  { value: "biweekly", label: "A cada 2 semanas" },
+  { value: "first_of_month", label: "1ª reunião do mês" },
+  { value: "last_of_month", label: "Última reunião do mês" },
+  { value: "until_day", label: "Até o dia… do mês" },
+];
+
 const todayValue = () => new Date().toISOString().slice(0, 10);
 
 /** Pauta padrão em edição no formulário; `id` existe apenas para as já salvas. */
-type AgendaDraft = { key: string; id?: string; title: string; assigneeId: string };
+type AgendaDraft = {
+  key: string;
+  id?: string;
+  title: string;
+  cadence: AgendaCadence;
+  cadenceDay: number | null;
+};
 
 export function ObligationDialog({ open, onOpenChange, obligation }: ObligationDialogProps) {
   const queryClient = useQueryClient();
@@ -75,16 +92,21 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   const agendaLoadedFor = useRef<string | null>(null);
   const { data: savedTemplates } = useObligationTaskTemplates(open ? obligation?.id : null);
   const [assigneeId, setAssigneeId] = useState("");
-  const [frequency, setFrequency] = useState<ObligationFrequency>("monthly");
+  const [frequency, setFrequency] = useState<ObligationFrequency>("weekly");
   const [intervalCount, setIntervalCount] = useState(1);
   const [daysOfWeek, setDaysOfWeek] = useState<number[]>([1]);
   const [monthRule, setMonthRule] = useState<ObligationMonthRule>("specific_days");
-  const [daysOfMonth, setDaysOfMonth] = useState("30");
+  const [daysOfMonth, setDaysOfMonth] = useState("1");
   const [businessDaysOnly, setBusinessDaysOnly] = useState(false);
   const [startDate, setStartDate] = useState(todayValue());
   const [endDate, setEndDate] = useState("");
-  const [createBeforeDays, setCreateBeforeDays] = useState(7);
   const [dueTime, setDueTime] = useState("");
+  const [reminderDays, setReminderDays] = useState(2);
+  const { data: allParticipants } = useObligationParticipants();
+  const { data: departmentMembers = [] } = useDepartmentMembers();
+  const [participantIds, setParticipantIds] = useState<string[]>([]);
+  const [participantsTouched, setParticipantsTouched] = useState(false);
+  const participantsLoadedFor = useRef<string | null>(null);
   const [priority, setPriority] = useState<Obligation["priority"]>("medium");
   const [columnId, setColumnId] = useState("");
   const [statusId, setStatusId] = useState("");
@@ -98,16 +120,19 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     setDepartmentId(obligation?.department_id ?? "");
     setNewDepartmentName("");
     setAssigneeId(obligation?.assignee_id ?? "");
-    setFrequency(obligation?.frequency ?? "monthly");
+    setFrequency(obligation?.frequency ?? "weekly");
     setIntervalCount(obligation?.interval_count ?? 1);
     setDaysOfWeek(obligation?.days_of_week?.length ? obligation.days_of_week : [1]);
     setMonthRule(obligation?.month_rule ?? "specific_days");
-    setDaysOfMonth(obligation?.days_of_month?.length ? obligation.days_of_month.join(", ") : "30");
+    setDaysOfMonth(obligation?.days_of_month?.length ? obligation.days_of_month.join(", ") : "1");
     setBusinessDaysOnly(obligation?.business_days_only ?? false);
     setStartDate(obligation?.start_date ?? todayValue());
     setEndDate(obligation?.end_date ?? "");
-    setCreateBeforeDays(obligation?.create_before_days ?? 7);
     setDueTime(obligation?.due_time?.slice(0, 5) ?? "");
+    setReminderDays(obligation?.reminder_days_before ?? 2);
+    setParticipantIds([]);
+    setParticipantsTouched(false);
+    participantsLoadedFor.current = null;
     setPriority(obligation?.priority ?? "medium");
     setColumnId(obligation?.column_id ?? "");
     setStatusId(obligation?.status_id ?? "");
@@ -128,61 +153,63 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
         key: template.id,
         id: template.id,
         title: template.title,
-        assigneeId: template.assignee_id ?? "",
+        cadence: template.cadence ?? "every",
+        cadenceDay: template.cadence_day ?? null,
       })),
       ...current,
     ]);
   }, [open, obligation, savedTemplates]);
 
-  const addAgendaItem = () => {
-    const key = crypto.randomUUID();
-    setAgendaItems((current) => [...current, { key, title: "", assigneeId: "" }]);
-    setFocusAgendaKey(key);
-  };
+  // Participantes salvos da reunião, carregados uma vez por abertura.
+  useEffect(() => {
+    if (!open || !obligation || !allParticipants) return;
+    if (participantsLoadedFor.current === obligation.id) return;
+    participantsLoadedFor.current = obligation.id;
+    setParticipantIds(
+      allParticipants
+        .filter((participant) => participant.obligation_id === obligation.id)
+        .map((participant) => participant.user_id),
+    );
+  }, [allParticipants, open, obligation]);
 
-  const updateAgendaItem = (key: string, patch: Partial<AgendaDraft>) => {
-    setAgendaItems((current) =>
-      current.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+  const membersOf = (id: string) =>
+    departmentMembers.filter((member) => member.department_id === id).map((member) => member.user_id);
+
+  const toggleParticipant = (userId: string) => {
+    setParticipantsTouched(true);
+    setParticipantIds((current) =>
+      current.includes(userId) ? current.filter((id) => id !== userId) : [...current, userId],
     );
   };
 
-  const removeAgendaItem = (key: string) => {
-    setAgendaItems((current) => current.filter((item) => item.key !== key));
-  };
+  const savedParticipantIds = useMemo(
+    () =>
+      obligation
+        ? (allParticipants ?? [])
+            .filter((participant) => participant.obligation_id === obligation.id)
+            .map((participant) => participant.user_id)
+        : [],
+    [allParticipants, obligation],
+  );
 
-  /** Linhas a gravar em obligation_task_templates, na ordem da lista. */
-  const agendaRowsFor = (obligationId: string, reuseIds: boolean) =>
-    agendaItems
-      .filter((item) => item.title.trim())
-      .map((item, position) => ({
-        id: reuseIds && item.id ? item.id : crypto.randomUUID(),
-        obligation_id: obligationId,
-        title: item.title.trim(),
-        assignee_id: item.assigneeId || null,
-        position,
-      }));
-
-  const removedTemplateIds = () => {
-    const keptIds = new Set(agendaItems.filter((item) => item.title.trim()).map((item) => item.id));
-    return (savedTemplates ?? [])
-      .map((template) => template.id)
-      .filter((id) => !keptIds.has(id));
-  };
-
-  const saveAgendaTemplates = async (obligationIds: string[]) => {
-    const removed = obligation ? removedTemplateIds() : [];
+  const saveParticipants = async (obligationId: string) => {
+    const removed = savedParticipantIds.filter((id) => !participantIds.includes(id));
+    const added = participantIds.filter((id) => !savedParticipantIds.includes(id));
     if (removed.length > 0) {
-      const { error } = await (supabase.from("obligation_task_templates" as any) as any)
+      const { error } = await (supabase.from("obligation_participants" as any) as any)
         .delete()
-        .in("id", removed);
+        .eq("obligation_id", obligationId)
+        .in("user_id", removed);
       if (error) return error;
     }
-    const rows = obligationIds.flatMap((id) => agendaRowsFor(id, Boolean(obligation)));
-    if (rows.length === 0) return null;
-    const { error } = await (supabase.from("obligation_task_templates" as any) as any).upsert(rows, {
-      onConflict: "id",
-    });
-    return error;
+    if (added.length > 0) {
+      const { error } = await (supabase.from("obligation_participants" as any) as any).upsert(
+        added.map((userId) => ({ obligation_id: obligationId, user_id: userId })),
+        { onConflict: "obligation_id,user_id", ignoreDuplicates: true },
+      );
+      if (error) return error;
+    }
+    return null;
   };
 
   const parsedMonthDays = useMemo(
@@ -224,6 +251,61 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     return `${intervalCount === 1 ? "Todo mês" : `${every} meses`}: dia${parsedMonthDays.length > 1 ? "s" : ""} ${parsedMonthDays.join(" e ") || "—"}`;
   }, [businessDaysOnly, daysOfWeek, frequency, intervalCount, monthRule, parsedMonthDays]);
 
+  const addAgendaItem = () => {
+    const key = crypto.randomUUID();
+    setAgendaItems((current) => [
+      ...current,
+      { key, title: "", cadence: "every", cadenceDay: null },
+    ]);
+    setFocusAgendaKey(key);
+  };
+
+  const updateAgendaItem = (key: string, patch: Partial<AgendaDraft>) => {
+    setAgendaItems((current) =>
+      current.map((item) => (item.key === key ? { ...item, ...patch } : item)),
+    );
+  };
+
+  const removeAgendaItem = (key: string) => {
+    setAgendaItems((current) => current.filter((item) => item.key !== key));
+  };
+
+  /** Linhas a gravar em obligation_task_templates, na ordem da lista. */
+  const agendaRowsFor = (obligationId: string, reuseIds: boolean) =>
+    agendaItems
+      .filter((item) => item.title.trim())
+      .map((item, position) => ({
+        id: reuseIds && item.id ? item.id : crypto.randomUUID(),
+        obligation_id: obligationId,
+        title: item.title.trim(),
+        cadence: item.cadence,
+        cadence_day: item.cadence === "until_day" ? (item.cadenceDay ?? 25) : null,
+        position,
+      }));
+
+  const removedTemplateIds = () => {
+    const keptIds = new Set(agendaItems.filter((item) => item.title.trim()).map((item) => item.id));
+    return (savedTemplates ?? [])
+      .map((template) => template.id)
+      .filter((id) => !keptIds.has(id));
+  };
+
+  const saveAgendaTemplates = async (obligationIds: string[]) => {
+    const removed = obligation ? removedTemplateIds() : [];
+    if (removed.length > 0) {
+      const { error } = await (supabase.from("obligation_task_templates" as any) as any)
+        .delete()
+        .in("id", removed);
+      if (error) return error;
+    }
+    const rows = obligationIds.flatMap((id) => agendaRowsFor(id, Boolean(obligation)));
+    if (rows.length === 0) return null;
+    const { error } = await (supabase.from("obligation_task_templates" as any) as any).upsert(rows, {
+      onConflict: "id",
+    });
+    return error;
+  };
+
   const departmentSearchTerm = departmentSearch.trim();
   const normalizedDepartmentSearch = departmentSearchTerm.toLocaleLowerCase("pt-BR");
   const filteredDepartments = departments.filter((department) =>
@@ -237,11 +319,13 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
 
   const chooseDepartment = (id: string) => {
     setDepartmentId(id);
+    // Numa reunião nova, os participantes vêm dos membros do departamento.
+    if (!obligation && !participantsTouched) setParticipantIds(membersOf(id));
     setNewDepartmentName("");
     setDepartmentOpen(false);
   };
 
-  // O departamento só é gravado ao salvar a obrigação, junto com ela.
+  // O departamento só é gravado ao salvar a reunião, junto com ela.
   const createDepartmentOption = () => {
     setDepartmentId("");
     setNewDepartmentName(departmentSearchTerm);
@@ -249,7 +333,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   };
 
   const save = async () => {
-    if (!title.trim()) return toast.error("Informe o nome da obrigação.");
+    if (!title.trim()) return toast.error("Informe o nome da reunião.");
     if (!departmentId && !newDepartmentName.trim())
       return toast.error("Selecione ou crie um departamento.");
     if (!startDate) return toast.error("Informe a data de início.");
@@ -259,6 +343,11 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       return toast.error("Informe ao menos um dia válido do mês.");
     if (endDate && endDate < startDate)
       return toast.error("A data final não pode ser anterior ao início.");
+    const participantsChanged =
+      participantIds.length !== savedParticipantIds.length ||
+      participantIds.some((id) => !savedParticipantIds.includes(id));
+    if (isOffline() && participantsChanged)
+      return toast.error("Conecte-se à internet para alterar os participantes.");
 
     setSaving(true);
     let resolvedDepartmentId = departmentId;
@@ -305,7 +394,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       business_days_only: frequency === "daily" && businessDaysOnly,
       start_date: startDate,
       end_date: endDate || null,
-      create_before_days: Math.max(0, createBeforeDays),
+      create_before_days: 0,
+      reminder_days_before: Math.max(0, reminderDays),
       due_time: dueTime || null,
       priority,
       column_id: columnId || null,
@@ -368,9 +458,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
           : [...current, ...localItems],
       );
       setSaving(false);
-      toast.success(
-        "Obrigação salva neste aparelho. Os próximos prazos serão gerados ao reconectar.",
-      );
+      toast.success("Reunião salva neste aparelho. Será sincronizada ao reconectar.");
       onOpenChange(false);
       return;
     }
@@ -391,8 +479,11 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     }
 
     const savedObligations = (data ?? []) as Array<{ id: string }>;
-    // As pautas precisam existir antes de gerar as reuniões, que já nascem com elas.
     const agendaError = await saveAgendaTemplates(savedObligations.map(({ id }) => id));
+    const participantsError = savedObligations[0]
+      ? await saveParticipants(savedObligations[0].id)
+      : null;
+    // Refaz as reuniões futuras ainda não preparadas com a nova recorrência e pauta.
     const refreshResults = await Promise.all(
       savedObligations.map(({ id }) =>
         (supabase as any).rpc("refresh_obligation", { target_obligation_id: id }),
@@ -402,21 +493,25 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     setSaving(false);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["obligations"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
       queryClient.invalidateQueries({ queryKey: ["obligation-task-templates"] }),
-      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-participants"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-agenda-preview"] }),
     ]);
     if (agendaError) {
-      toast.error(`Obrigação salva, mas as tarefas das reuniões não foram salvas: ${agendaError.message}`);
+      toast.error(`Reunião salva, mas a pauta padrão não foi salva: ${agendaError.message}`);
+      return;
+    }
+    if (participantsError) {
+      toast.error(`Reunião salva, mas os participantes não foram salvos: ${participantsError.message}`);
       return;
     }
     if (refreshError) {
-      toast.error(
-        `Obrigação salva, mas alguns próximos prazos não foram gerados: ${refreshError.message}`,
-      );
+      toast.error(`Reunião salva, mas as próximas reuniões não foram geradas: ${refreshError.message}`);
       return;
     }
-    toast.success(obligation ? "Obrigação atualizada" : "Obrigação criada");
+    toast.success(obligation ? "Reunião atualizada" : "Reunião criada");
     onOpenChange(false);
   };
 
@@ -424,7 +519,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[92vh] max-w-3xl overflow-y-auto sm:rounded-2xl">
         <DialogHeader>
-          <DialogTitle>{obligation ? "Editar obrigação" : "Nova obrigação"}</DialogTitle>
+          <DialogTitle>{obligation ? "Editar reunião" : "Nova reunião"}</DialogTitle>
         </DialogHeader>
 
         <div className="space-y-5">
@@ -557,87 +652,82 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
           </section>
 
           <section className="space-y-3 rounded-xl border bg-muted/20 p-4">
-            <div className="flex items-start justify-between gap-3">
+            <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
-                <h3 className="font-medium">Tarefas de cada reunião</h3>
+                <h3 className="font-medium">Participantes</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Toda reunião gerada já nasce com estas tarefas. Você ainda pode incluir pautas
-                  extras em cada reunião.
+                  Recebem o aviso antes de cada reunião para revisar a pauta.
                 </p>
               </div>
-              {agendaItems.length > 0 && (
-                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                  {agendaItems.length} {agendaItems.length === 1 ? "tarefa" : "tarefas"}
-                </span>
-              )}
+              <div className="flex flex-wrap gap-2">
+                {departmentId && membersOf(departmentId).length > 0 && (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setParticipantsTouched(true);
+                      setParticipantIds((current) => [
+                        ...new Set([...current, ...membersOf(departmentId)]),
+                      ]);
+                    }}
+                  >
+                    <Users className="mr-1.5 h-3.5 w-3.5" />
+                    Incluir membros do departamento ({membersOf(departmentId).length})
+                  </Button>
+                )}
+                <Popover>
+                  <PopoverTrigger asChild>
+                    <Button type="button" variant="outline" size="sm">
+                      <Plus className="mr-1.5 h-3.5 w-3.5" /> Escolher pessoas
+                    </Button>
+                  </PopoverTrigger>
+                  <PopoverContent align="end" className="w-72 p-1">
+                    <div className="max-h-64 overflow-y-auto">
+                      {profiles.map((profile) => (
+                        <label
+                          key={profile.id}
+                          className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                        >
+                          <Checkbox
+                            checked={participantIds.includes(profile.id)}
+                            onCheckedChange={() => toggleParticipant(profile.id)}
+                          />
+                          <span className="truncate">{profile.full_name || profile.email}</span>
+                        </label>
+                      ))}
+                    </div>
+                  </PopoverContent>
+                </Popover>
+              </div>
             </div>
-            {agendaItems.length === 0 ? (
-              <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
-                Nenhuma tarefa padrão. As pautas serão criadas manualmente em cada reunião.
+            {participantIds.length === 0 ? (
+              <p className="text-xs text-muted-foreground">
+                Nenhum participante. O aviso irá só para o responsável.
               </p>
             ) : (
-              <ol className="space-y-2">
-                {agendaItems.map((item, index) => (
-                  <li key={item.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
-                    <span className="hidden w-6 shrink-0 text-right text-sm text-muted-foreground sm:block">
-                      {index + 1}.
-                    </span>
-                    <Input
-                      value={item.title}
-                      onChange={(event) => updateAgendaItem(item.key, { title: event.target.value })}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter") return;
-                        event.preventDefault();
-                        if (item.title.trim()) addAgendaItem();
-                      }}
-                      placeholder="Ex.: Conferir folha de pagamento"
-                      aria-label={`Tarefa ${index + 1}`}
-                      autoFocus={item.key === focusAgendaKey}
-                      className="flex-1"
-                    />
-                    <div className="flex gap-2">
-                      <Select
-                        value={item.assigneeId || "default"}
-                        onValueChange={(value) =>
-                          updateAgendaItem(item.key, { assigneeId: value === "default" ? "" : value })
-                        }
-                      >
-                        <SelectTrigger className="sm:w-52" aria-label={`Responsável da tarefa ${index + 1}`}>
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="default">Responsável da reunião</SelectItem>
-                          {profiles.map((profile) => (
-                            <SelectItem key={profile.id} value={profile.id}>
-                              {profile.full_name || profile.email}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
-                      <Button
+              <div className="flex flex-wrap gap-1.5">
+                {participantIds.map((id) => {
+                  const profile = profiles.find((item) => item.id === id);
+                  return (
+                    <span
+                      key={id}
+                      className="inline-flex items-center gap-1 rounded-full bg-background px-2.5 py-1 text-xs shadow-sm"
+                    >
+                      {profile?.full_name || profile?.email || "Usuário"}
+                      <button
                         type="button"
-                        variant="ghost"
-                        size="icon"
-                        className="shrink-0 text-muted-foreground hover:text-destructive"
-                        onClick={() => removeAgendaItem(item.key)}
-                        aria-label={`Remover tarefa ${index + 1}`}
-                        title="Remover tarefa"
+                        onClick={() => toggleParticipant(id)}
+                        className="text-muted-foreground hover:text-destructive"
+                        aria-label={`Remover ${profile?.full_name || "participante"}`}
                       >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </li>
-                ))}
-              </ol>
+                        ×
+                      </button>
+                    </span>
+                  );
+                })}
+              </div>
             )}
-            <Button
-              type="button"
-              variant="outline"
-              className="w-full border-dashed"
-              onClick={addAgendaItem}
-            >
-              <Plus className="mr-1.5 h-4 w-4" /> Adicionar tarefa
-            </Button>
           </section>
 
           <section className="space-y-4 rounded-xl border bg-muted/20 p-4">
@@ -784,23 +874,23 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                 />
               </div>
               <div className="space-y-2">
-                <Label htmlFor="obligation-before">Criar tarefa antes</Label>
+                <Label htmlFor="obligation-reminder">Avisar participantes</Label>
                 <div className="flex items-center gap-2">
                   <Input
-                    id="obligation-before"
+                    id="obligation-reminder"
                     type="number"
                     min={0}
-                    max={365}
-                    value={createBeforeDays}
+                    max={30}
+                    value={reminderDays}
                     onChange={(event) =>
-                      setCreateBeforeDays(Math.max(0, Number(event.target.value) || 0))
+                      setReminderDays(Math.min(30, Math.max(0, Number(event.target.value) || 0)))
                     }
                   />
-                  <span className="text-xs text-muted-foreground">dias</span>
+                  <span className="text-xs text-muted-foreground">dias antes</span>
                 </div>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="obligation-time">Horário opcional</Label>
+                <Label htmlFor="obligation-time">Horário da reunião</Label>
                 <Input
                   id="obligation-time"
                   type="time"
@@ -811,6 +901,111 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
             </div>
           </section>
 
+          <section className="space-y-3 rounded-xl border bg-muted/20 p-4">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <h3 className="font-medium">Pauta padrão</h3>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Cada reunião recebe estes itens conforme a periodicidade escolhida. Mudanças
+                  valem para as reuniões que ainda não tiveram a pauta confirmada.
+                </p>
+              </div>
+              {agendaItems.length > 0 && (
+                <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
+                  {agendaItems.length} {agendaItems.length === 1 ? "item" : "itens"}
+                </span>
+              )}
+            </div>
+            {agendaItems.length === 0 ? (
+              <p className="rounded-lg border border-dashed px-3 py-4 text-center text-sm text-muted-foreground">
+                Nenhum item na pauta padrão. Adicione os assuntos que esta reunião trata.
+              </p>
+            ) : (
+              <ol className="space-y-2">
+                {agendaItems.map((item, index) => (
+                  <li key={item.key} className="flex flex-col gap-2 sm:flex-row sm:items-center">
+                    <span className="hidden w-6 shrink-0 text-right text-sm text-muted-foreground sm:block">
+                      {index + 1}.
+                    </span>
+                    <Input
+                      value={item.title}
+                      onChange={(event) => updateAgendaItem(item.key, { title: event.target.value })}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter") return;
+                        event.preventDefault();
+                        if (item.title.trim()) addAgendaItem();
+                      }}
+                      placeholder="Ex.: Conferir folha de pagamento"
+                      aria-label={`Pauta ${index + 1}`}
+                      autoFocus={item.key === focusAgendaKey}
+                      className="flex-1"
+                    />
+                    <div className="flex gap-2">
+                      <Select
+                        value={item.cadence}
+                        onValueChange={(value) =>
+                          updateAgendaItem(item.key, {
+                            cadence: value as AgendaCadence,
+                            cadenceDay:
+                              value === "until_day" ? (item.cadenceDay ?? 25) : item.cadenceDay,
+                          })
+                        }
+                      >
+                        <SelectTrigger
+                          className="sm:w-48"
+                          aria-label={`Periodicidade da pauta ${index + 1}`}
+                        >
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {cadenceOptions.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {option.label}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
+                      {item.cadence === "until_day" && (
+                        <Input
+                          type="number"
+                          min={1}
+                          max={31}
+                          value={item.cadenceDay ?? 25}
+                          onChange={(event) =>
+                            updateAgendaItem(item.key, {
+                              cadenceDay: Math.min(31, Math.max(1, Number(event.target.value) || 1)),
+                            })
+                          }
+                          className="w-16"
+                          aria-label={`Dia limite da pauta ${index + 1}`}
+                          title="Dia do mês"
+                        />
+                      )}
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="icon"
+                        className="shrink-0 text-muted-foreground hover:text-destructive"
+                        onClick={() => removeAgendaItem(item.key)}
+                        aria-label={`Remover pauta ${index + 1}`}
+                        title="Remover pauta"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </Button>
+                    </div>
+                  </li>
+                ))}
+              </ol>
+            )}
+            <Button
+              type="button"
+              variant="outline"
+              className="w-full border-dashed"
+              onClick={addAgendaItem}
+            >
+              <Plus className="mr-1.5 h-4 w-4" /> Adicionar item
+            </Button>
+          </section>
           <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-3">
             <div className="space-y-2">
               <Label>Prioridade da tarefa</Label>
@@ -874,7 +1069,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                 checked={isActive}
                 onCheckedChange={(value) => setIsActive(value === true)}
               />
-              Obrigação ativa
+              Reunião ativa
             </label>
           </section>
         </div>
@@ -885,7 +1080,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
           </Button>
           <Button onClick={() => void save()} disabled={saving}>
             {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {saving ? "Salvando..." : "Salvar obrigação"}
+            {saving ? "Salvando..." : "Salvar reunião"}
           </Button>
         </DialogFooter>
       </DialogContent>

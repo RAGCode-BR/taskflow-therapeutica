@@ -5,18 +5,9 @@ Itens concluídos saem da lista; o histórico fica no Git.
 
 ## 1. Bloqueia o próximo deploy
 
-- [ ] **Apagar os 19 arquivos órfãos da remoção de clientes.** Sem isso o build falha
-  (erros de tipo em `portal.entregas.tsx` e `portal.financeiro.tsx`). Arquivos: rotas
-  `clients*.tsx`, `client-report.$clientId.tsx`, `portal.entregas.tsx`,
-  `portal.financeiro.tsx`, `notes.tsx`; componentes `ClientFilesManager`, `ClientNotesSheet`,
-  `ClientFilesSheet`, `InlineTaskEditor`; libs `use-instagram-insights`, `instagram-insights`
-  (+ teste), `client-report.functions`, `sync-task-attachment-to-client`,
-  `admin-users.functions`.
-- [ ] Depois de apagar: remover `useClients`, `useRelatedClients` e `useArchivedClientTasks`
-  de `src/hooks/use-data.ts`, regenerar `routeTree.gen.ts` e rodar `npm run build`.
-- [ ] **Commit e deploy do frontend** (Cloudflare). Nada do trabalho de 24–25/09 foi
-  commitado: correções do offline, mural (vencidos), seletor de departamento, pautas padrão,
-  remoção de clientes.
+- [ ] **Deploy do frontend** (Cloudflare) a partir da branch `feat/meeting-agenda-results`
+  (ou depois de juntá-la à `main`). O banco já está no modelo novo de reuniões; a versão no ar
+  ainda é a antiga.
 
 ## 2. Segurança (da análise de 24/09)
 
@@ -55,14 +46,8 @@ Itens concluídos saem da lista; o histórico fica no Git.
   `service_requests`.
 - [ ] Resíduos do multi-workspace (colunas, triggers, "espelho", permissões duplicadas em
   `user_permissions` e `workspace_memberships`).
-- [ ] Obrigações: `meeting_mode DEFAULT true` fez dois triggers disputarem a mesma ocorrência
-  (reunião pode concluir com pautas pendentes); `CURRENT_DATE` em UTC nas partes antigas; sem
-  feriados; datas perdidas se o cron falhar; confirmar se o job `taskflow-obligations-daily`
-  existe; materialização em loop (lenta).
-- [ ] **`pg_cron` não está instalado no projeto.** Não existe job diário: as reuniões e
-  tarefas do dia só são geradas quando alguém abre a tela de Obrigações (que chama
-  `materialize_obligations`). Se ninguém abrir, as tarefas do dia não aparecem. Avaliar
-  habilitar `pg_cron` e agendar a geração diária.
+- [ ] Limpeza futura do modelo antigo de pautas-tarefa: coluna `tasks.obligation_template_id`,
+  índice `tasks_obligation_template_occurrence_idx` e função `create_obligation_template_tasks`.
 - [ ] Trigger que apaga anexos ao concluir tarefa faz `DELETE` direto em `storage.objects`
   (pode ser bloqueado pelo Supabase). Confirmar.
 - [ ] Clientes (dados mantidos de propósito): decidir no futuro se apaga tabelas/colunas de
@@ -91,14 +76,13 @@ Itens concluídos saem da lista; o histórico fica no Git.
 
 ## 6. Decisões de produto
 
-- [ ] **Rotinas diárias dos departamentos (criadas em 25/09):** todas estão com o Arthuro
-  como responsável e rodam de segunda a sexta. Ajustar:
-  - responsáveis reais (Haila, Valorise e Daniel ainda não têm usuário no sistema);
-  - tarefas que não são diárias e hoje se repetem todo dia: "ATÉ 25 DE CADA MÊS" e
-    "Baixa das notas de funcionários (CONVÊNIOS)" (Financeiro), "PLANILHA DE FLUXO DE CAIXA
-    SEMANAL" (Gestão Adm-Financeira), "ROTINA MENSAL: NF de devolução…" (Faturamento), e
-    itens de RH/DP como Avaliação de desempenho, PDI, Plano de Cargos, Fechar folha.
-    Podem virar obrigações próprias (semanal/mensal).
+- [ ] **Obrigações — pontos deixados para depois:** a aba Calendário e a edição de tarefas em
+  lote saíram da tela nova; participantes são definidos por rotina (não por reunião avulsa); o
+  aviso de "2 dias antes" conta dias corridos (reunião de segunda avisa no sábado).
+- [ ] **Reuniões dos departamentos (criadas em 25/09):** estão com o Arthuro como responsável.
+  Trocar pelos responsáveis reais e cadastrar os membros de cada departamento quando Haila,
+  Valorise, Daniel e Fabiana tiverem usuário. Revisar a periodicidade dos itens da pauta padrão
+  (só "até dia 25" e "ROTINA MENSAL" foram ajustados; o resto está como "Toda reunião").
 
 - [ ] PDF da ata usa o timbrado da LA Business (`src/assets/Timbrado LA.pdf`).
 - [ ] A importação de ata perdeu "Salvar nas anotações do cliente". Definir outro lugar para

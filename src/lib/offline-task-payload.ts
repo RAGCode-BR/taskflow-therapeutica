@@ -25,6 +25,7 @@ const TASK_CREATE_COLUMNS = [
   "workspace_id",
   "conversation_closed_at",
   "interruptions",
+  "obligation_agenda_item_id",
 ] as const;
 
 /** Envia somente colunas que existem atualmente em public.tasks. */
