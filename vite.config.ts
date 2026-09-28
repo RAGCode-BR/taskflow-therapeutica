@@ -75,10 +75,10 @@ export default defineConfig({
     timbradoImagePlugin,
     VitePWA({
       outDir: ".output/public",
-      // Não substitua o service worker no meio de uma sessão. Com atualização
-      // automática, uma página ainda usando chunks antigos podia perder esses
-      // arquivos do cache e falhar ao abrir Dashboard/Clientes sem internet.
-      registerType: "prompt",
+      // O sistema não possuía uma interface para aceitar atualizações em espera.
+      // Com `prompt`, o navegador mantinha indefinidamente a versão anterior
+      // mesmo depois de a main e o Worker já estarem atualizados.
+      registerType: "autoUpdate",
       injectRegister: "auto",
       includeAssets: [
         "favicon.ico",
