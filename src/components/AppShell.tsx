@@ -20,6 +20,7 @@ import {
   Layers3,
 } from "lucide-react";
 import { NotificationBell } from "@/components/NotificationBell";
+import { ExternalSystemsMenu } from "@/components/ExternalSystemsMenu";
 import { MeetingReminderPopup } from "@/components/MeetingReminderPopup";
 import { AssignmentPopup } from "@/components/AssignmentPopup";
 import { useEffect, useMemo, useState, type ReactNode } from "react";
@@ -240,6 +241,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Link>
             </Button>
           )}
+          <ExternalSystemsMenu mobile />
           <NotificationBell />
         </div>
       </div>
@@ -359,6 +361,7 @@ export function AppShell({ children }: { children: ReactNode }) {
               </Link>
             </Button>
           )}
+          <ExternalSystemsMenu />
           <NotificationBell />
         </div>
         {children}
