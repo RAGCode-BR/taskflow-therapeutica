@@ -1347,6 +1347,9 @@ function DepartmentsDialog({
   const [savingKey, setSavingKey] = useState<string | null>(null);
   const [newName, setNewName] = useState("");
   const [creating, setCreating] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [renaming, setRenaming] = useState(false);
   const [deleteTarget, setDeleteTarget] = useState<ObligationDepartment | null>(null);
   const [deleting, setDeleting] = useState(false);
   const targetMeetings = deleteTarget
@@ -1376,6 +1379,49 @@ function DepartmentsDialog({
     setNewName("");
     await queryClient.invalidateQueries({ queryKey: ["obligation-departments"] });
     toast.success("Departamento criado");
+  };
+
+  // Reuniões chamadas "Reunião — <nome antigo>" acompanham o novo nome.
+  const renameDepartment = async (department: ObligationDepartment) => {
+    const name = editName.trim();
+    if (!name || name === department.name) return setEditingId(null);
+    if (isOffline()) return toast.error("Conecte-se à internet para renomear o departamento.");
+    if (
+      departments.some(
+        (other) =>
+          other.id !== department.id &&
+          other.name.trim().toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"),
+      )
+    )
+      return toast.error("Já existe um departamento com esse nome.");
+    setRenaming(true);
+    const { error } = await (supabase.from("obligation_departments" as any) as any)
+      .update({ name })
+      .eq("id", department.id);
+    if (error) {
+      setRenaming(false);
+      return toast.error(error.message);
+    }
+    const oldTitle = `Reunião — ${department.name}`;
+    const meetingsToRename = obligations.filter(
+      (obligation) => obligation.department_id === department.id && obligation.title === oldTitle,
+    );
+    if (meetingsToRename.length > 0) {
+      const { error: titleError } = await (supabase.from("obligations" as any) as any)
+        .update({ title: `Reunião — ${name}` })
+        .in(
+          "id",
+          meetingsToRename.map((obligation) => obligation.id),
+        );
+      if (titleError) toast.error(`Departamento renomeado, mas a reunião manteve o nome antigo.`);
+    }
+    setRenaming(false);
+    setEditingId(null);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["obligation-departments"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligations"] }),
+    ]);
+    toast.success("Departamento renomeado");
   };
 
   // As reuniões do departamento saem junto; as tarefas já geradas continuam existindo.
@@ -1467,13 +1513,70 @@ function DepartmentsDialog({
               return (
                 <li key={department.id} className="rounded-xl border p-3">
                   <div className="flex flex-wrap items-center justify-between gap-2">
-                    <span className="flex items-center gap-2 font-medium">
-                      <span
-                        className="h-3 w-3 rounded-sm"
-                        style={{ backgroundColor: department.color || "#64748b" }}
-                      />
-                      {department.name}
-                    </span>
+                    {editingId === department.id ? (
+                      <form
+                        className="flex min-w-0 flex-1 items-center gap-2"
+                        onSubmit={(event) => {
+                          event.preventDefault();
+                          void renameDepartment(department);
+                        }}
+                      >
+                        <Input
+                          value={editName}
+                          onChange={(event) => setEditName(event.target.value)}
+                          onKeyDown={(event) => {
+                            if (event.key === "Escape") {
+                              event.stopPropagation();
+                              setEditingId(null);
+                            }
+                          }}
+                          aria-label="Novo nome do departamento"
+                          className="h-8"
+                          disabled={renaming}
+                          autoFocus
+                        />
+                        <Button
+                          type="submit"
+                          size="sm"
+                          className="h-8 shrink-0"
+                          disabled={renaming || !editName.trim()}
+                        >
+                          {renaming && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
+                          Salvar
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="ghost"
+                          className="h-8 shrink-0"
+                          disabled={renaming}
+                          onClick={() => setEditingId(null)}
+                        >
+                          Cancelar
+                        </Button>
+                      </form>
+                    ) : (
+                      <span className="flex min-w-0 items-center gap-2 font-medium">
+                        <span
+                          className="h-3 w-3 shrink-0 rounded-sm"
+                          style={{ backgroundColor: department.color || "#64748b" }}
+                        />
+                        <span className="truncate">{department.name}</span>
+                        <Button
+                          size="icon"
+                          variant="ghost"
+                          className="h-7 w-7 shrink-0 text-muted-foreground"
+                          aria-label={`Renomear o departamento ${department.name}`}
+                          title="Renomear departamento"
+                          onClick={() => {
+                            setEditingId(department.id);
+                            setEditName(department.name);
+                          }}
+                        >
+                          <Pencil className="h-3.5 w-3.5" />
+                        </Button>
+                      </span>
+                    )}
                     <div className="flex items-center gap-1">
                       <Popover>
                         <PopoverTrigger asChild>
