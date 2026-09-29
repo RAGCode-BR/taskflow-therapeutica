@@ -81,8 +81,9 @@ Itens concluídos saem da lista; o histórico fica no Git.
   aviso de "2 dias antes" conta dias corridos (reunião de segunda avisa no sábado).
 - [ ] **Reuniões dos departamentos (criadas em 25/09):** estão com o Arthuro como responsável.
   Trocar pelos responsáveis reais e cadastrar os membros de cada departamento quando Haila,
-  Valorise, Daniel e Fabiana tiverem usuário. Revisar a periodicidade dos itens da pauta padrão
-  (só "até dia 25" e "ROTINA MENSAL" foram ajustados; o resto está como "Toda reunião").
+  Valorise, Daniel e Fabiana tiverem usuário. Todos os itens das pautas padrão (inclusive
+  Comercial, Design e CQ) estão como "Toda reunião" de propósito: os usuários vão configurar a
+  periodicidade depois.
 
 - [ ] PDF da ata usa o timbrado da LA Business (`src/assets/Timbrado LA.pdf`).
 - [ ] A importação de ata perdeu "Salvar nas anotações do cliente". Definir outro lugar para

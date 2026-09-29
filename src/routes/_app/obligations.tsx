@@ -676,6 +676,7 @@ function ObligationsPage() {
         departments={departments}
         members={departmentMembers}
         profiles={profiles}
+        obligations={obligations}
       />
       {meeting && meetingObligation ? (
         <MeetingDialog
@@ -1332,15 +1333,81 @@ function DepartmentsDialog({
   departments,
   members,
   profiles,
+  obligations,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   departments: ObligationDepartment[];
   members: DepartmentMember[];
   profiles: Profile[];
+  obligations: Obligation[];
 }) {
   const queryClient = useQueryClient();
+  const { user, activeWorkspace } = useAuth();
   const [savingKey, setSavingKey] = useState<string | null>(null);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [deleteTarget, setDeleteTarget] = useState<ObligationDepartment | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const targetMeetings = deleteTarget
+    ? obligations.filter((obligation) => obligation.department_id === deleteTarget.id)
+    : [];
+
+  const createDepartment = async () => {
+    const name = newName.trim();
+    if (!name) return;
+    if (isOffline()) return toast.error("Conecte-se à internet para criar o departamento.");
+    if (
+      departments.some(
+        (department) =>
+          department.name.trim().toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"),
+      )
+    )
+      return toast.error("Já existe um departamento com esse nome.");
+    setCreating(true);
+    const { error } = await (supabase.from("obligation_departments" as any) as any).insert({
+      name,
+      workspace_id: activeWorkspace?.id,
+      created_by: user?.id,
+      position: Math.max(0, ...departments.map((department) => department.position)) + 1,
+    });
+    setCreating(false);
+    if (error) return toast.error(error.message);
+    setNewName("");
+    await queryClient.invalidateQueries({ queryKey: ["obligation-departments"] });
+    toast.success("Departamento criado");
+  };
+
+  // As reuniões do departamento saem junto; as tarefas já geradas continuam existindo.
+  const confirmDelete = async () => {
+    if (!deleteTarget) return;
+    if (isOffline()) return toast.error("Conecte-se à internet para excluir o departamento.");
+    setDeleting(true);
+    if (targetMeetings.length > 0) {
+      const { error } = await (supabase.from("obligations" as any) as any).delete().in(
+        "id",
+        targetMeetings.map((obligation) => obligation.id),
+      );
+      if (error) {
+        setDeleting(false);
+        return toast.error(error.message);
+      }
+    }
+    const { error } = await (supabase.from("obligation_departments" as any) as any)
+      .delete()
+      .eq("id", deleteTarget.id);
+    setDeleting(false);
+    if (error) return toast.error(error.message);
+    setDeleteTarget(null);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["obligation-departments"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-department-members"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligations"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+      queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] }),
+    ]);
+    toast.success("Departamento excluído");
+  };
 
   const toggleMember = async (departmentId: string, userId: string, isMember: boolean) => {
     if (isOffline()) return toast.error("Conecte-se à internet para alterar os membros.");
@@ -1364,9 +1431,32 @@ function DepartmentsDialog({
             reunião desse departamento. Você ainda pode ajustar os participantes de cada reunião.
           </DialogDescription>
         </DialogHeader>
+        <form
+          className="flex gap-2"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void createDepartment();
+          }}
+        >
+          <Input
+            value={newName}
+            onChange={(event) => setNewName(event.target.value)}
+            placeholder="Nome do novo departamento"
+            aria-label="Nome do novo departamento"
+            disabled={creating}
+          />
+          <Button type="submit" disabled={creating || !newName.trim()} className="shrink-0">
+            {creating ? (
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+            ) : (
+              <Plus className="mr-2 h-4 w-4" />
+            )}
+            Criar
+          </Button>
+        </form>
         {departments.length === 0 ? (
           <p className="py-6 text-center text-sm text-muted-foreground">
-            Nenhum departamento. Eles são criados junto com a primeira reunião de cada setor.
+            Nenhum departamento ainda. Crie o primeiro acima.
           </p>
         ) : (
           <ul className="space-y-2">
@@ -1384,37 +1474,49 @@ function DepartmentsDialog({
                       />
                       {department.name}
                     </span>
-                    <Popover>
-                      <PopoverTrigger asChild>
-                        <Button size="sm" variant="outline" className="h-7">
-                          <Users className="mr-1.5 h-3.5 w-3.5" /> Membros ({memberIds.length})
-                        </Button>
-                      </PopoverTrigger>
-                      <PopoverContent align="end" className="w-72 p-1">
-                        <div className="max-h-64 overflow-y-auto">
-                          {profiles.map((profile) => {
-                            const isMember = memberIds.includes(profile.id);
-                            return (
-                              <label
-                                key={profile.id}
-                                className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                              >
-                                <Checkbox
-                                  checked={isMember}
-                                  disabled={savingKey === `${department.id}:${profile.id}`}
-                                  onCheckedChange={() =>
-                                    void toggleMember(department.id, profile.id, isMember)
-                                  }
-                                />
-                                <span className="truncate">
-                                  {profile.full_name || profile.email}
-                                </span>
-                              </label>
-                            );
-                          })}
-                        </div>
-                      </PopoverContent>
-                    </Popover>
+                    <div className="flex items-center gap-1">
+                      <Popover>
+                        <PopoverTrigger asChild>
+                          <Button size="sm" variant="outline" className="h-7">
+                            <Users className="mr-1.5 h-3.5 w-3.5" /> Membros ({memberIds.length})
+                          </Button>
+                        </PopoverTrigger>
+                        <PopoverContent align="end" className="w-72 p-1">
+                          <div className="max-h-64 overflow-y-auto">
+                            {profiles.map((profile) => {
+                              const isMember = memberIds.includes(profile.id);
+                              return (
+                                <label
+                                  key={profile.id}
+                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
+                                >
+                                  <Checkbox
+                                    checked={isMember}
+                                    disabled={savingKey === `${department.id}:${profile.id}`}
+                                    onCheckedChange={() =>
+                                      void toggleMember(department.id, profile.id, isMember)
+                                    }
+                                  />
+                                  <span className="truncate">
+                                    {profile.full_name || profile.email}
+                                  </span>
+                                </label>
+                              );
+                            })}
+                          </div>
+                        </PopoverContent>
+                      </Popover>
+                      <Button
+                        size="icon"
+                        variant="ghost"
+                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
+                        aria-label={`Excluir o departamento ${department.name}`}
+                        title="Excluir departamento"
+                        onClick={() => setDeleteTarget(department)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                      </Button>
+                    </div>
                   </div>
                   <p className="mt-2 text-xs text-muted-foreground">
                     {memberIds.length > 0
@@ -1433,6 +1535,55 @@ function DepartmentsDialog({
           </ul>
         )}
       </DialogContent>
+      <AlertDialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteTarget(null);
+        }}
+      >
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Excluir o departamento {deleteTarget?.name}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2">
+                {targetMeetings.length > 0 ? (
+                  <>
+                    <p>
+                      {targetMeetings.length === 1
+                        ? "A reunião recorrente deste departamento também será excluída, com as reuniões agendadas e as pautas:"
+                        : `As ${targetMeetings.length} reuniões recorrentes deste departamento também serão excluídas, com as reuniões agendadas e as pautas:`}
+                    </p>
+                    <ul className="list-disc pl-5 font-medium text-foreground">
+                      {targetMeetings.map((obligation) => (
+                        <li key={obligation.id}>{obligation.title}</li>
+                      ))}
+                    </ul>
+                    <p>As tarefas já geradas continuam existindo.</p>
+                  </>
+                ) : (
+                  <p>
+                    O departamento não tem reuniões. Os membros cadastrados nele serão removidos.
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
+            <AlertDialogAction
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+              onClick={(event) => {
+                event.preventDefault();
+                void confirmDelete();
+              }}
+            >
+              {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+              {deleting ? "Excluindo..." : "Excluir"}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Dialog>
   );
 }

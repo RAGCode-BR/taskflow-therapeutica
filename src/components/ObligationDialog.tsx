@@ -84,7 +84,6 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [departmentId, setDepartmentId] = useState("");
-  const [newDepartmentName, setNewDepartmentName] = useState("");
   const [departmentOpen, setDepartmentOpen] = useState(false);
   const [departmentSearch, setDepartmentSearch] = useState("");
   const [agendaItems, setAgendaItems] = useState<AgendaDraft[]>([]);
@@ -118,7 +117,6 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     setTitle(obligation?.title ?? "");
     setDescription(obligation?.description ?? "");
     setDepartmentId(obligation?.department_id ?? "");
-    setNewDepartmentName("");
     setAssigneeId(obligation?.assignee_id ?? "");
     setFrequency(obligation?.frequency ?? "weekly");
     setIntervalCount(obligation?.interval_count ?? 1);
@@ -173,7 +171,9 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   }, [allParticipants, open, obligation]);
 
   const membersOf = (id: string) =>
-    departmentMembers.filter((member) => member.department_id === id).map((member) => member.user_id);
+    departmentMembers
+      .filter((member) => member.department_id === id)
+      .map((member) => member.user_id);
 
   const toggleParticipant = (userId: string) => {
     setParticipantsTouched(true);
@@ -285,9 +285,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
 
   const removedTemplateIds = () => {
     const keptIds = new Set(agendaItems.filter((item) => item.title.trim()).map((item) => item.id));
-    return (savedTemplates ?? [])
-      .map((template) => template.id)
-      .filter((id) => !keptIds.has(id));
+    return (savedTemplates ?? []).map((template) => template.id).filter((id) => !keptIds.has(id));
   };
 
   const saveAgendaTemplates = async (obligationIds: string[]) => {
@@ -300,9 +298,12 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     }
     const rows = obligationIds.flatMap((id) => agendaRowsFor(id, Boolean(obligation)));
     if (rows.length === 0) return null;
-    const { error } = await (supabase.from("obligation_task_templates" as any) as any).upsert(rows, {
-      onConflict: "id",
-    });
+    const { error } = await (supabase.from("obligation_task_templates" as any) as any).upsert(
+      rows,
+      {
+        onConflict: "id",
+      },
+    );
     return error;
   };
 
@@ -315,27 +316,18 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     (department) => department.name.toLocaleLowerCase("pt-BR") === normalizedDepartmentSearch,
   );
   const selectedDepartmentName =
-    departments.find((department) => department.id === departmentId)?.name ?? newDepartmentName;
+    departments.find((department) => department.id === departmentId)?.name ?? "";
 
   const chooseDepartment = (id: string) => {
     setDepartmentId(id);
     // Numa reunião nova, os participantes vêm dos membros do departamento.
     if (!obligation && !participantsTouched) setParticipantIds(membersOf(id));
-    setNewDepartmentName("");
-    setDepartmentOpen(false);
-  };
-
-  // O departamento só é gravado ao salvar a reunião, junto com ela.
-  const createDepartmentOption = () => {
-    setDepartmentId("");
-    setNewDepartmentName(departmentSearchTerm);
     setDepartmentOpen(false);
   };
 
   const save = async () => {
     if (!title.trim()) return toast.error("Informe o nome da reunião.");
-    if (!departmentId && !newDepartmentName.trim())
-      return toast.error("Selecione ou crie um departamento.");
+    if (!selectedDepartmentName) return toast.error("Selecione um departamento.");
     if (!startDate) return toast.error("Informe a data de início.");
     if (frequency === "weekly" && daysOfWeek.length === 0)
       return toast.error("Selecione ao menos um dia da semana.");
@@ -350,37 +342,6 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       return toast.error("Conecte-se à internet para alterar os participantes.");
 
     setSaving(true);
-    let resolvedDepartmentId = departmentId;
-    if (!resolvedDepartmentId && newDepartmentName.trim()) {
-      if (isOffline()) {
-        setSaving(false);
-        return toast.error("Conecte-se à internet para criar um novo departamento.");
-      }
-      const existingDepartment = departments.find(
-        (department) =>
-          department.name.toLocaleLowerCase("pt-BR") ===
-          newDepartmentName.trim().toLocaleLowerCase("pt-BR"),
-      );
-      if (existingDepartment) {
-        resolvedDepartmentId = existingDepartment.id;
-      } else {
-        const { data: createdDepartment, error: departmentError } = await (
-          supabase.from("obligation_departments" as any) as any
-        )
-          .insert({
-            name: newDepartmentName.trim(),
-            workspace_id: activeWorkspace?.id,
-            created_by: user?.id,
-          })
-          .select("id")
-          .single();
-        if (departmentError || !createdDepartment) {
-          setSaving(false);
-          return toast.error(departmentError?.message ?? "Não foi possível criar o departamento.");
-        }
-        resolvedDepartmentId = createdDepartment.id;
-      }
-    }
     const payload = {
       title: title.trim(),
       description: description.trim() || null,
@@ -400,7 +361,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       priority,
       column_id: columnId || null,
       status_id: statusId || null,
-      department_id: resolvedDepartmentId,
+      department_id: departmentId,
       meeting_mode: true,
       is_active: isActive,
     };
@@ -468,9 +429,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
           .update(payload)
           .eq("id", obligation.id)
           .select("id")
-      : (supabase.from("obligations" as any) as any)
-          .insert(payload)
-          .select("id");
+      : (supabase.from("obligations" as any) as any).insert(payload).select("id");
     const { data, error } = await request;
     if (error) {
       setSaving(false);
@@ -504,11 +463,15 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       return;
     }
     if (participantsError) {
-      toast.error(`Reunião salva, mas os participantes não foram salvos: ${participantsError.message}`);
+      toast.error(
+        `Reunião salva, mas os participantes não foram salvos: ${participantsError.message}`,
+      );
       return;
     }
     if (refreshError) {
-      toast.error(`Reunião salva, mas as próximas reuniões não foram geradas: ${refreshError.message}`);
+      toast.error(
+        `Reunião salva, mas as próximas reuniões não foram geradas: ${refreshError.message}`,
+      );
       return;
     }
     toast.success(obligation ? "Reunião atualizada" : "Reunião criada");
@@ -551,17 +514,10 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                       className="w-full justify-between font-normal"
                     >
                       {selectedDepartmentName ? (
-                        <span className="flex min-w-0 items-center gap-2">
-                          <span className="truncate">{selectedDepartmentName}</span>
-                          {!departmentId && (
-                            <span className="shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-                              novo
-                            </span>
-                          )}
-                        </span>
+                        <span className="truncate">{selectedDepartmentName}</span>
                       ) : (
                         <span className="truncate text-muted-foreground">
-                          Selecione ou crie um departamento
+                          Selecione um departamento
                         </span>
                       )}
                       <ChevronDown className="ml-2 h-4 w-4 shrink-0 opacity-50" />
@@ -578,18 +534,14 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                         if (event.key !== "Enter") return;
                         event.preventDefault();
                         if (exactDepartment) chooseDepartment(exactDepartment.id);
-                        else if (departmentSearchTerm) createDepartmentOption();
                         else if (filteredDepartments.length === 1)
                           chooseDepartment(filteredDepartments[0].id);
                       }}
-                      placeholder="Buscar ou digitar um novo departamento..."
+                      placeholder="Buscar departamento..."
                       className="mb-2 h-8"
                       autoFocus
                     />
                     <div className="max-h-56 overflow-y-auto">
-                      {newDepartmentName && !departmentSearchTerm && (
-                        <DepartmentOption selected label={newDepartmentName} tag="novo" />
-                      )}
                       {filteredDepartments.map((department) => (
                         <DepartmentOption
                           key={department.id}
@@ -598,21 +550,11 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                           onSelect={() => chooseDepartment(department.id)}
                         />
                       ))}
-                      {departmentSearchTerm && !exactDepartment && (
-                        <button
-                          type="button"
-                          onClick={createDepartmentOption}
-                          className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm text-primary hover:bg-accent"
-                        >
-                          <Plus className="h-4 w-4 shrink-0" />
-                          <span className="truncate">
-                            Criar departamento “{departmentSearchTerm}”
-                          </span>
-                        </button>
-                      )}
-                      {!departmentSearchTerm && departments.length === 0 && !newDepartmentName && (
+                      {filteredDepartments.length === 0 && (
                         <p className="px-2 py-3 text-center text-sm text-muted-foreground">
-                          Nenhum departamento ainda. Digite um nome para criar o primeiro.
+                          {departments.length === 0
+                            ? "Nenhum departamento. Crie em Obrigações › Departamentos."
+                            : "Nenhum departamento encontrado."}
                         </p>
                       )}
                     </div>
@@ -906,8 +848,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
               <div>
                 <h3 className="font-medium">Pauta padrão</h3>
                 <p className="mt-1 text-xs text-muted-foreground">
-                  Cada reunião recebe estes itens conforme a periodicidade escolhida. Mudanças
-                  valem para as reuniões que ainda não tiveram a pauta confirmada.
+                  Cada reunião recebe estes itens conforme a periodicidade escolhida. Mudanças valem
+                  para as reuniões que ainda não tiveram a pauta confirmada.
                 </p>
               </div>
               {agendaItems.length > 0 && (
@@ -929,7 +871,9 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                     </span>
                     <Input
                       value={item.title}
-                      onChange={(event) => updateAgendaItem(item.key, { title: event.target.value })}
+                      onChange={(event) =>
+                        updateAgendaItem(item.key, { title: event.target.value })
+                      }
                       onKeyDown={(event) => {
                         if (event.key !== "Enter") return;
                         event.preventDefault();
@@ -973,7 +917,10 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                           value={item.cadenceDay ?? 25}
                           onChange={(event) =>
                             updateAgendaItem(item.key, {
-                              cadenceDay: Math.min(31, Math.max(1, Number(event.target.value) || 1)),
+                              cadenceDay: Math.min(
+                                31,
+                                Math.max(1, Number(event.target.value) || 1),
+                              ),
                             })
                           }
                           className="w-16"
@@ -1091,12 +1038,10 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
 function DepartmentOption({
   label,
   selected,
-  tag,
   onSelect,
 }: {
   label: string;
   selected: boolean;
-  tag?: string;
   onSelect?: () => void;
 }) {
   return (
@@ -1110,11 +1055,6 @@ function DepartmentOption({
     >
       <Check className={cn("h-4 w-4 shrink-0", selected ? "opacity-100" : "opacity-0")} />
       <span className="truncate">{label}</span>
-      {tag && (
-        <span className="ml-auto shrink-0 rounded-full bg-primary/10 px-2 py-0.5 text-xs text-primary">
-          {tag}
-        </span>
-      )}
     </button>
   );
 }
