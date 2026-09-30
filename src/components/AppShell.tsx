@@ -54,7 +54,7 @@ const allNav: readonly NavItem[] = [
   { to: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { to: "/tasks", label: "Minhas Tarefas", icon: ListChecks },
   { to: "/conversations", label: "Conversas", icon: MessagesSquare },
-  { to: "/obligations", label: "Obrigações", icon: CalendarCog },
+  { to: "/obligations", label: "Reuniões", icon: CalendarCog },
   { to: "/reports", label: "Relatórios", icon: BarChart3 },
   { to: "/users", label: "Usuários", icon: Users, adminOnly: true },
   { to: "/trash", label: "Lixeira", icon: Trash2 },

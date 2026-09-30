@@ -553,7 +553,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                       {filteredDepartments.length === 0 && (
                         <p className="px-2 py-3 text-center text-sm text-muted-foreground">
                           {departments.length === 0
-                            ? "Nenhum departamento. Crie em Obrigações › Departamentos."
+                            ? "Nenhum departamento. Crie em Reuniões › Departamentos."
                             : "Nenhum departamento encontrado."}
                         </p>
                       )}

@@ -40,7 +40,7 @@ const ACCESS_OPTIONS = [
   ["dashboard", "Dashboard"],
   ["tasks", "Minhas tarefas"],
   ["conversations", "Conversas"],
-  ["obligations", "Obrigações"],
+  ["obligations", "Reuniões"],
   ["reports", "Relatórios"],
   ["mural", "Mural"],
   ["trash", "Lixeira"],

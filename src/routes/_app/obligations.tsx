@@ -372,7 +372,7 @@ function ObligationsPage() {
         <div>
           <div className="flex items-center gap-2">
             <CalendarClock className="h-6 w-6 text-primary" />
-            <h1 className="text-2xl font-semibold tracking-tight">Obrigações</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Reuniões</h1>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
             Reuniões recorrentes por departamento: pauta, resultado de cada item e tarefas geradas.
