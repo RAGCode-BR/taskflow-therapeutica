@@ -5,9 +5,10 @@ Itens concluídos saem da lista; o histórico fica no Git.
 
 ## 1. Bloqueia o próximo deploy
 
-- [ ] **Deploy do frontend** (Cloudflare) a partir da branch `feat/meeting-agenda-results`
-  (ou depois de juntá-la à `main`). O banco já está no modelo novo de reuniões; a versão no ar
-  ainda é a antiga.
+- [ ] **Deploy automático:** o workflow `.github/workflows/deploy-cloudflare.yml` publica a cada
+  push na `main`, mas só funciona depois de cadastrar no GitHub os segredos
+  `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `VITE_SUPABASE_URL` e
+  `VITE_SUPABASE_PUBLISHABLE_KEY`. Até lá, publicar com `npm run deploy:cloudflare`.
 
 ## 2. Segurança (da análise de 24/09)
 

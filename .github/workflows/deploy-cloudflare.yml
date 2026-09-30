@@ -1,0 +1,41 @@
+# Publica o Task Flow no Cloudflare a cada push na main.
+# Segredos necessários (GitHub › Settings › Secrets and variables › Actions):
+#   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID,
+#   VITE_SUPABASE_URL, VITE_SUPABASE_PUBLISHABLE_KEY
+# Os segredos do servidor (service role, Gemini etc.) ficam no próprio Worker
+# no Cloudflare e não são apagados pelo deploy.
+name: Deploy Cloudflare
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: deploy-cloudflare
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Testes
+        run: npm test
+
+      - name: Build e deploy
+        run: npm run deploy:cloudflare
+        env:
+          VITE_SUPABASE_URL: ${{ secrets.VITE_SUPABASE_URL }}
+          VITE_SUPABASE_PUBLISHABLE_KEY: ${{ secrets.VITE_SUPABASE_PUBLISHABLE_KEY }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
