@@ -131,6 +131,16 @@ function ListPage() {
     [collaborators, user?.id],
   );
 
+  const collaboratorTaskIdsByUser = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const collaborator of collaborators) {
+      const set = map.get(collaborator.collaborator_id) ?? new Set<string>();
+      set.add(collaborator.task_id);
+      map.set(collaborator.collaborator_id, set);
+    }
+    return map;
+  }, [collaborators]);
+
   const duplicateTask = async () => {
     if (!user || !duplicateTaskTarget || !duplicateDueDate) return;
     setDuplicatingTask(true);
@@ -154,6 +164,7 @@ function ListPage() {
       subtaskAssigneeTaskIds,
       collaboratorTaskIds,
       subtaskAssigneeTaskIdsByUser,
+      collaboratorTaskIdsByUser,
       subtaskDateFilterTaskIds,
       restrictToCurrentUserParticipation: isCollaborator,
     });
@@ -184,7 +195,7 @@ function ListPage() {
       const dueDateDifference = aDueTimestamp - bDueTimestamp;
       return dueDateSortDirection === "asc" ? dueDateDifference : -dueDateDifference;
     });
-  }, [tasks, filters, user?.id, isCollaborator, subtaskAssigneeTaskIds, collaboratorTaskIds, subtaskAssigneeTaskIdsByUser, subtaskDateFilterTaskIds, dueDateSortDirection]);
+  }, [tasks, filters, user?.id, isCollaborator, subtaskAssigneeTaskIds, collaboratorTaskIds, subtaskAssigneeTaskIdsByUser, collaboratorTaskIdsByUser, subtaskDateFilterTaskIds, dueDateSortDirection]);
 
   const completeTask = async (taskId: string) => {
     const completedStatus = statuses.find((status) => status.is_completed);

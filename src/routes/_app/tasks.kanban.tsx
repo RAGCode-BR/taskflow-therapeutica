@@ -383,6 +383,16 @@ function KanbanPage() {
       ),
     [collaborators, user?.id],
   );
+
+  const collaboratorTaskIdsByUser = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const collaborator of collaborators) {
+      const set = map.get(collaborator.collaborator_id) ?? new Set<string>();
+      set.add(collaborator.task_id);
+      map.set(collaborator.collaborator_id, set);
+    }
+    return map;
+  }, [collaborators]);
   const { data: boardPrefs } = useBoardPreferences();
   const { data: allSubtasks = [] } = useSubtasks();
   const updatePrefs = useUpdateBoardPreferences();
@@ -565,6 +575,7 @@ function KanbanPage() {
       subtaskAssigneeTaskIds,
       collaboratorTaskIds,
       subtaskAssigneeTaskIdsByUser,
+      collaboratorTaskIdsByUser,
       subtaskDateFilterTaskIds,
       restrictToCurrentUserParticipation: isCollaborator,
     });
@@ -626,6 +637,7 @@ function KanbanPage() {
     subtaskAssigneeTaskIds,
     collaboratorTaskIds,
     subtaskAssigneeTaskIdsByUser,
+    collaboratorTaskIdsByUser,
     subtaskDateFilterTaskIds,
     isCollaborator,
   ]);
@@ -642,6 +654,7 @@ function KanbanPage() {
       subtaskAssigneeTaskIds,
       collaboratorTaskIds,
       subtaskAssigneeTaskIdsByUser,
+      collaboratorTaskIdsByUser,
       subtaskDateFilterTaskIds,
       restrictToCurrentUserParticipation: isCollaborator,
     });
@@ -654,6 +667,7 @@ function KanbanPage() {
     subtaskAssigneeTaskIds,
     collaboratorTaskIds,
     subtaskAssigneeTaskIdsByUser,
+    collaboratorTaskIdsByUser,
     subtaskDateFilterTaskIds,
     isCollaborator,
   ]);

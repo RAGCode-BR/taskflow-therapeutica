@@ -9,6 +9,25 @@ import { supabase } from "@/integrations/supabase/client";
 import type { Database } from "@/integrations/supabase/types";
 import { useAuth } from "@/hooks/use-auth";
 
+const PAGE_SIZE = 1000;
+
+/**
+ * O Supabase devolve no máximo 1000 linhas por consulta. Sem paginar, tabelas
+ * maiores chegam cortadas e tarefas somem da tela sem nenhum erro.
+ * A consulta precisa de uma ordenação estável (termine em `id`).
+ */
+async function fetchAllRows<T>(
+  page: (from: number, to: number) => PromiseLike<{ data: T[] | null; error: any }>,
+): Promise<{ data: T[]; error: any }> {
+  const rows: T[] = [];
+  for (let from = 0; ; from += PAGE_SIZE) {
+    const { data, error } = await page(from, from + PAGE_SIZE - 1);
+    if (error) return { data: rows, error };
+    rows.push(...(data ?? []));
+    if (!data || data.length < PAGE_SIZE) return { data: rows, error: null };
+  }
+}
+
 /**
  * Data access layer for the TaskFlow screens.
  *
@@ -232,12 +251,16 @@ export function useTasks() {
             })
           : supabase;
       // Soft-delete strategy: deleted tasks stay in the database, but normal screens hide them.
-      const { data, error } = await taskClient
-        .from("tasks")
-        .select("*")
-        .is("deleted_at", null)
-        .order("position", { ascending: true })
-        .order("created_at", { ascending: false });
+      const { data, error } = await fetchAllRows((from, to) =>
+        taskClient
+          .from("tasks")
+          .select("*")
+          .is("deleted_at", null)
+          .order("position", { ascending: true })
+          .order("created_at", { ascending: false })
+          .order("id")
+          .range(from, to),
+      );
       if (error) {
         const cached = await get<Task[]>(offlineKey);
         if (cached) return cached;
@@ -405,8 +428,12 @@ export function useTaskCollaborators() {
   return useQuery({
     queryKey: ["task_collaborators"],
     queryFn: async () => {
-      const { data, error } = await (supabase.from("task_collaborators") as any).select(
-        "task_id, collaborator_id, added_by, created_at",
+      const { data, error } = await fetchAllRows((from, to) =>
+        (supabase.from("task_collaborators") as any)
+          .select("task_id, collaborator_id, added_by, created_at")
+          .order("task_id")
+          .order("collaborator_id")
+          .range(from, to),
       );
       if (error) throw error;
       return (data ?? []) as TaskCollaborator[];
@@ -475,10 +502,14 @@ export function useSubtasks() {
   return useQuery({
     queryKey: ["subtasks"],
     queryFn: async () => {
-      const { data, error } = await supabase
-        .from("subtasks")
-        .select("id, task_id, title, done, position, assignee_id, due_date, completed_at")
-        .order("position");
+      const { data, error } = await fetchAllRows((from, to) =>
+        supabase
+          .from("subtasks")
+          .select("id, task_id, title, done, position, assignee_id, due_date, completed_at")
+          .order("position")
+          .order("id")
+          .range(from, to),
+      );
       if (error) throw error;
       return (data ?? []) as Subtask[];
     },

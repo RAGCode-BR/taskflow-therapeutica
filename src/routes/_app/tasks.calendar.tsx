@@ -107,6 +107,16 @@ function CalendarPage() {
     [collaborators, user?.id],
   );
 
+  const collaboratorTaskIdsByUser = useMemo(() => {
+    const map = new Map<string, Set<string>>();
+    for (const collaborator of collaborators) {
+      const set = map.get(collaborator.collaborator_id) ?? new Set<string>();
+      set.add(collaborator.task_id);
+      map.set(collaborator.collaborator_id, set);
+    }
+    return map;
+  }, [collaborators]);
+
   const openSubtaskTaskIds = useMemo(
     () => new Set(subtasks.filter((subtask) => !subtask.done).map((subtask) => subtask.task_id)),
     [subtasks],
@@ -127,6 +137,7 @@ function CalendarPage() {
         subtaskAssigneeTaskIds,
         collaboratorTaskIds,
         subtaskAssigneeTaskIdsByUser,
+        collaboratorTaskIdsByUser,
         restrictToCurrentUserParticipation: isCollaborator,
       }),
     [
@@ -137,6 +148,7 @@ function CalendarPage() {
       subtaskAssigneeTaskIds,
       collaboratorTaskIds,
       subtaskAssigneeTaskIdsByUser,
+      collaboratorTaskIdsByUser,
     ],
   );
 
@@ -381,7 +393,9 @@ function CalendarTaskItem({
           {initials}
         </AvatarFallback>
       </Avatar>
-      <span className={`min-w-0 flex-1 truncate font-medium ${expanded ? "text-sm" : "text-[11px]"}`}>
+      <span
+        className={`min-w-0 flex-1 truncate font-medium ${expanded ? "text-sm" : "text-[11px]"}`}
+      >
         {task.title}
       </span>
       <span

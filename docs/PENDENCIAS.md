@@ -63,7 +63,8 @@ Itens concluídos saem da lista; o histórico fica no Git.
 ## 5. Frontend e qualidade
 
 - [ ] Kanban: N+1 (cada card faz as próprias consultas) e um canal realtime por card.
-- [ ] `useTasks` sem paginação e sem filtro de arquivadas no servidor.
+- [ ] `useTasks`, subtarefas e colaboradores agora buscam todas as linhas em páginas de 1000
+  (antes vinham cortadas em 1000). Ainda falta filtrar arquivadas no servidor e carregar sob demanda.
 - [ ] Arquivos gigantes a dividir: `TaskCard.tsx`, `TaskDialog.tsx`, `obligations.tsx`,
   `reports.tsx`, `tasks.kanban.tsx`, `mural.tsx`, `TaskConversationPanel.tsx`.
 - [ ] Código morto: integração Lovable (inclusive `@lovable.dev/vite-tanstack-config` no

@@ -8,13 +8,7 @@ import {
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import {
-  Users,
-  UserCheck,
-  PenSquare,
-  Filter as FilterIcon,
-  RotateCcw,
-} from "lucide-react";
+import { Users, UserCheck, PenSquare, Filter as FilterIcon, RotateCcw } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { useAssignableProfiles, useColumns } from "@/hooks/use-data";
 
@@ -269,6 +263,8 @@ export function applyTaskFilters<
     subtaskAssigneeTaskIds?: Set<string> | null;
     collaboratorTaskIds?: Set<string> | null;
     subtaskAssigneeTaskIdsByUser?: Map<string, Set<string>> | null;
+    /** Tarefas em que cada usuário é colaborador (para o filtro por pessoa). */
+    collaboratorTaskIdsByUser?: Map<string, Set<string>> | null;
     /** Parent tasks that have a subtask matching the active due-date filter. */
     subtaskDateFilterTaskIds?: Set<string> | null;
     restrictToCurrentUserParticipation?: boolean;
@@ -310,15 +306,13 @@ export function applyTaskFilters<
     }
     if (f.assignee) {
       const assigneeSubtasks = opts?.subtaskAssigneeTaskIdsByUser?.get(f.assignee);
-      // When filtering by the logged-in user, include direct assignments,
-      // collaborations and subtasks. Merely creating a task for another
-      // person does not make it part of that user's personal workload.
-      const isCurrentUserCollaborator = f.assignee === uid && collaboratorIds?.has(t.id);
-      if (
-        t.assignee_id !== f.assignee &&
-        !assigneeSubtasks?.has(t.id) &&
-        !isCurrentUserCollaborator
-      ) {
+      // Include direct assignments, collaborations and subtasks of the chosen
+      // person. Merely creating a task for another person does not make it
+      // part of that user's personal workload.
+      const isCollaborator =
+        !!opts?.collaboratorTaskIdsByUser?.get(f.assignee)?.has(t.id) ||
+        (f.assignee === uid && !!collaboratorIds?.has(t.id));
+      if (t.assignee_id !== f.assignee && !assigneeSubtasks?.has(t.id) && !isCollaborator) {
         return false;
       }
     }
