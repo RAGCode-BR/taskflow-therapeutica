@@ -54,8 +54,7 @@ Itens concluídos saem da lista; o histórico fica no Git.
   órfão no bucket; o ideal é apagar pela Storage API (Edge Function). Até 30/09 esse trigger
   impedia concluir qualquer tarefa.
 - [ ] Tarefas automáticas da pauta: itens incluídos na reunião depois da criação só ganham
-  tarefa na próxima rotina (abrir Reuniões ou 7h). Marcar "Concluído" no item não conclui a
-  tarefa automática dele.
+  tarefa na próxima rotina (abrir Reuniões ou 7h).
 - [ ] Clientes (dados mantidos de propósito): decidir no futuro se apaga tabelas/colunas de
   clientes e os triggers `prevent_inactive_client_*` e `archive_inactive_client_operations`.
 

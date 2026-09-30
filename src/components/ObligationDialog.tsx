@@ -857,8 +857,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                   <span className="font-medium">Criar tarefas da pauta automaticamente</span>
                   <span className="block text-xs text-muted-foreground">
                     Cada item vira uma tarefa do responsável, com os participantes como
-                    colaboradores. Concluir a tarefa conclui o item. "Gerar tarefa" continua
-                    disponível para tarefas extras.
+                    colaboradores. Concluir a tarefa conclui o item, e marcar o item como Concluído
+                    conclui a tarefa. "Gerar tarefa" continua disponível para tarefas extras.
                   </span>
                 </span>
               </label>

@@ -928,6 +928,8 @@ function MeetingDialog({
       queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] }),
       queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
       queryClient.invalidateQueries({ queryKey: ["obligation-agenda-preview"] }),
+      // Concluir ou desmarcar um item conclui ou reabre a tarefa automática dele.
+      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
     ]);
 
   /**
