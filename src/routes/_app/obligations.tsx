@@ -649,6 +649,16 @@ function ObligationsPage() {
                         </dd>
                       </div>
                       <div className="col-span-2">
+                        <dt className="text-muted-foreground">Tarefas da pauta</dt>
+                        <dd className="mt-1 font-medium">
+                          {!obligation.auto_create_tasks
+                            ? "Só quando gerar tarefa na reunião"
+                            : obligation.create_before_days === 0
+                              ? "Criadas automaticamente no dia"
+                              : `Criadas automaticamente ${obligation.create_before_days} dia(s) antes`}
+                        </dd>
+                      </div>
+                      <div className="col-span-2">
                         <dt className="text-muted-foreground">Participantes</dt>
                         <dd className="mt-1 font-medium">
                           {people.length > 0
@@ -1278,7 +1288,7 @@ function AgendaItemRow({
             onClick={onGenerateTask}
           >
             <Plus className="mr-1 h-3.5 w-3.5" />
-            {result === "task" ? "Outra tarefa" : "Gerar tarefa"}
+            {tasks.length > 0 ? "Outra tarefa" : "Gerar tarefa"}
           </Button>
           {tasks.length === 0 && (
             <Button
@@ -1313,6 +1323,11 @@ function AgendaItemRow({
                 <span className={`min-w-0 flex-1 truncate ${done ? "line-through" : ""}`}>
                   {task.title}
                 </span>
+                {task.obligation_auto_task && (
+                  <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
+                    automática
+                  </span>
+                )}
                 <span className="shrink-0 text-muted-foreground">
                   {assignee?.full_name || assignee?.email || "Sem responsável"}
                   {task.due_date ? ` · ${format(new Date(task.due_date), "dd/MM")}` : ""}

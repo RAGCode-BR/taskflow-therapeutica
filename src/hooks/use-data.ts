@@ -67,6 +67,8 @@ export interface Task {
   obligation_occurrence_id?: string | null;
   obligation_template_id?: string | null;
   obligation_agenda_item_id?: string | null;
+  /** Tarefa criada sozinha a partir de um item da pauta. */
+  obligation_auto_task?: boolean;
   /** Ambiente dono da tarefa. Diverge do ativo quando ela chega por participação. */
   workspace_id?: string | null;
 }

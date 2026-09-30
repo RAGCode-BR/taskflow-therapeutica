@@ -49,8 +49,13 @@ Itens concluídos saem da lista; o histórico fica no Git.
   `user_permissions` e `workspace_memberships`).
 - [ ] Limpeza futura do modelo antigo de pautas-tarefa: coluna `tasks.obligation_template_id`,
   índice `tasks_obligation_template_occurrence_idx` e função `create_obligation_template_tasks`.
-- [ ] Trigger que apaga anexos ao concluir tarefa faz `DELETE` direto em `storage.objects`
-  (pode ser bloqueado pelo Supabase). Confirmar.
+- [ ] Ao concluir tarefa, o trigger apaga os anexos de conversa removendo a linha de
+  `storage.objects` (liberado com `storage.allow_delete_query`). O arquivo físico pode ficar
+  órfão no bucket; o ideal é apagar pela Storage API (Edge Function). Até 30/09 esse trigger
+  impedia concluir qualquer tarefa.
+- [ ] Tarefas automáticas da pauta: itens incluídos na reunião depois da criação só ganham
+  tarefa na próxima rotina (abrir Reuniões ou 7h). Marcar "Concluído" no item não conclui a
+  tarefa automática dele.
 - [ ] Clientes (dados mantidos de propósito): decidir no futuro se apaga tabelas/colunas de
   clientes e os triggers `prevent_inactive_client_*` e `archive_inactive_client_operations`.
 

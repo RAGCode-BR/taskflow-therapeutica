@@ -1101,6 +1101,7 @@ export type Database = {
           interruptions: number;
           obligation_occurrence_id: string | null;
           obligation_agenda_item_id: string | null;
+          obligation_auto_task: boolean
           position: number;
           priority: Database["public"]["Enums"]["task_priority"] | null;
           status: Database["public"]["Enums"]["task_status"] | null;
@@ -1132,6 +1133,7 @@ export type Database = {
           interruptions?: number;
           obligation_occurrence_id?: string | null;
           obligation_agenda_item_id?: string | null;
+          obligation_auto_task?: boolean
           position?: number;
           priority?: Database["public"]["Enums"]["task_priority"] | null;
           status?: Database["public"]["Enums"]["task_status"] | null;
@@ -1163,6 +1165,7 @@ export type Database = {
           interruptions?: number;
           obligation_occurrence_id?: string | null;
           obligation_agenda_item_id?: string | null;
+          obligation_auto_task?: boolean
           position?: number;
           priority?: Database["public"]["Enums"]["task_priority"] | null;
           status?: Database["public"]["Enums"]["task_status"] | null;

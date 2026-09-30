@@ -101,6 +101,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   const [endDate, setEndDate] = useState("");
   const [dueTime, setDueTime] = useState("");
   const [reminderDays, setReminderDays] = useState(2);
+  const [autoCreateTasks, setAutoCreateTasks] = useState(true);
+  const [taskDaysBefore, setTaskDaysBefore] = useState(0);
   const { data: allParticipants } = useObligationParticipants();
   const { data: departmentMembers = [] } = useDepartmentMembers();
   const [participantIds, setParticipantIds] = useState<string[]>([]);
@@ -128,6 +130,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     setEndDate(obligation?.end_date ?? "");
     setDueTime(obligation?.due_time?.slice(0, 5) ?? "");
     setReminderDays(obligation?.reminder_days_before ?? 2);
+    setAutoCreateTasks(obligation?.auto_create_tasks ?? true);
+    setTaskDaysBefore(obligation?.create_before_days ?? 0);
     setParticipantIds([]);
     setParticipantsTouched(false);
     participantsLoadedFor.current = null;
@@ -355,7 +359,8 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
       business_days_only: frequency === "daily" && businessDaysOnly,
       start_date: startDate,
       end_date: endDate || null,
-      create_before_days: 0,
+      create_before_days: autoCreateTasks ? Math.max(0, taskDaysBefore) : 0,
+      auto_create_tasks: autoCreateTasks,
       reminder_days_before: Math.max(0, reminderDays),
       due_time: dueTime || null,
       priority,
@@ -840,6 +845,46 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
                   onChange={(event) => setDueTime(event.target.value)}
                 />
               </div>
+            </div>
+            <div className="mt-4 rounded-xl border bg-muted/30 p-3">
+              <label className="flex items-start gap-2 text-sm">
+                <Checkbox
+                  className="mt-0.5"
+                  checked={autoCreateTasks}
+                  onCheckedChange={(value) => setAutoCreateTasks(value === true)}
+                />
+                <span>
+                  <span className="font-medium">Criar tarefas da pauta automaticamente</span>
+                  <span className="block text-xs text-muted-foreground">
+                    Cada item vira uma tarefa do responsável, com os participantes como
+                    colaboradores. Concluir a tarefa conclui o item. "Gerar tarefa" continua
+                    disponível para tarefas extras.
+                  </span>
+                </span>
+              </label>
+              {autoCreateTasks && (
+                <div className="mt-3 flex items-center gap-2 pl-6">
+                  <Label htmlFor="obligation-task-days" className="text-xs font-normal">
+                    Criar
+                  </Label>
+                  <Input
+                    id="obligation-task-days"
+                    type="number"
+                    min={0}
+                    max={30}
+                    className="h-8 w-20"
+                    value={taskDaysBefore}
+                    onChange={(event) =>
+                      setTaskDaysBefore(Math.min(30, Math.max(0, Number(event.target.value) || 0)))
+                    }
+                  />
+                  <span className="text-xs text-muted-foreground">
+                    {taskDaysBefore === 0
+                      ? "dias antes (0 = no dia da reunião)"
+                      : "dias antes da reunião"}
+                  </span>
+                </div>
+              )}
             </div>
           </section>
 

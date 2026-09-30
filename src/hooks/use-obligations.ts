@@ -31,6 +31,8 @@ export interface Obligation {
   meeting_mode: boolean;
   /** Dias de antecedência do aviso aos participantes. */
   reminder_days_before: number;
+  /** Cria uma tarefa por item da pauta `create_before_days` dias antes da reunião. */
+  auto_create_tasks: boolean;
   is_active: boolean;
   created_by: string;
   created_at: string;
@@ -266,9 +268,9 @@ export function useObligationAgendaItems() {
         .order("position")
         .order("created_at");
       if (error) throw error;
-      return ((data ?? []) as Array<ObligationAgendaItem & { obligation_occurrences?: unknown }>).map(
-        ({ obligation_occurrences: _occurrence, ...item }) => item as ObligationAgendaItem,
-      );
+      return (
+        (data ?? []) as Array<ObligationAgendaItem & { obligation_occurrences?: unknown }>
+      ).map(({ obligation_occurrences: _occurrence, ...item }) => item as ObligationAgendaItem);
     },
   });
 }
