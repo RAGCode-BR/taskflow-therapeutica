@@ -76,6 +76,8 @@ interface Props {
     dueTime?: string;
     assigneeId?: string | null;
     priority?: Task["priority"];
+    /** Colaboradores já marcados (ex.: participantes da reunião). */
+    collaboratorIds?: string[];
   };
 }
 
@@ -248,6 +250,7 @@ export function TaskDialog({
     taskCreator?.email ||
     (task?.created_by === user?.id ? profile?.full_name || user?.email : null) ||
     "Usuário não identificado";
+  const defaultCollaboratorsKey = (defaults?.collaboratorIds ?? []).join(",");
 
   useEffect(() => {
     if (!open) return;
@@ -278,8 +281,11 @@ export function TaskDialog({
       setPriority(defaults?.priority ?? "medium");
       setColumnId(defaultColumnId ?? "");
       setTargetWorkspaceId(activeWorkspace?.id ?? "");
-      setAssigneeId(defaults?.assigneeId ?? user?.id ?? "");
-      setCollaboratorIds([]);
+      const initialAssignee = defaults?.assigneeId ?? user?.id ?? "";
+      setAssigneeId(initialAssignee);
+      setCollaboratorIds(
+        defaultCollaboratorsKey.split(",").filter((id) => id && id !== initialAssignee),
+      );
       setDueDate(defaults?.dueDate ?? "");
       setDueTime(defaults?.dueTime ?? "");
       setDueDateChangeReason("");
@@ -305,6 +311,7 @@ export function TaskDialog({
     defaults?.assigneeId,
     defaults?.dueDate,
     defaults?.dueTime,
+    defaultCollaboratorsKey,
   ]);
 
   const loadRelated = async (taskId: string) => {

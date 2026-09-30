@@ -1223,6 +1223,10 @@ function MeetingDialog({
           title: taskFor?.title,
           dueDate: occurrence.due_date >= todayKey() ? occurrence.due_date : todayKey(),
           priority: obligation.priority,
+          // Participantes e responsável da reunião acompanham a tarefa gerada.
+          collaboratorIds: [
+            ...new Set([...participantIds, obligation.assignee_id].filter(Boolean) as string[]),
+          ],
         }}
       />
     </>
