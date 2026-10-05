@@ -170,6 +170,14 @@ export const createTasksFromAta = createServerFn({ method: "POST" })
   .handler(async ({ data, context }) => {
     const userId = context?.userId;
     if (!userId) throw new Error("Sessão expirada. Entre novamente para criar tarefas.");
+    // A gravação abaixo usa a chave de administrador; antes, confere a permissão
+    // de Tarefas com o login de quem chamou.
+    const { data: canCreate, error: permissionError } = await context.supabase.rpc(
+      "has_page_permission",
+      { _page: "tasks" },
+    );
+    if (permissionError) throw new Error(permissionError.message);
+    if (!canCreate) throw new Error("Você não tem permissão para criar tarefas.");
     const payload = data.tasks.map(({ tag_id, ...task }) => ({ ...task, created_by: userId }));
     const { supabaseAdmin } = await import("@/integrations/supabase/client.server");
     // The server client bypasses task RLS; the database trigger preserves this

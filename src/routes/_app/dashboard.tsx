@@ -1,6 +1,12 @@
 import { createFileRoute } from "@tanstack/react-router";
 import { useMemo, useState } from "react";
-import { type Task, useAssignableProfiles, useColumns, useSubtasks } from "@/hooks/use-data";
+import {
+  type Task,
+  useAssignableProfiles,
+  useColumns,
+  useSubtasks,
+  useTaskCollaborators,
+} from "@/hooks/use-data";
 import { useWorkspaceTasks } from "@/hooks/use-workspace-tasks";
 import { DateFilterBar } from "@/components/DateFilterBar";
 import { matchDateFilter, priorityLabels, statusLabels, type DateFilter } from "@/lib/task-utils";
@@ -363,7 +369,25 @@ function TaskDetailPanel({
 
 function Dashboard() {
   const { profile, user, isAdmin } = useAuth();
-  const { data: tasks = [] } = useWorkspaceTasks();
+  const { data: workspaceTasks = [] } = useWorkspaceTasks();
+  const { data: collaborators = [] } = useTaskCollaborators();
+  const { data: subtasks = [] } = useSubtasks();
+  // Admin vê a equipe toda; colaborador conta e lista só as tarefas de que participa
+  // (responsável, colaborador ou responsável por subtarefa), como em Minhas Tarefas.
+  const tasks = useMemo(() => {
+    if (isAdmin || !user?.id) return workspaceTasks;
+    const memberTaskIds = new Set([
+      ...collaborators
+        .filter((collaborator) => collaborator.collaborator_id === user.id)
+        .map((collaborator) => collaborator.task_id),
+      ...subtasks
+        .filter((subtask) => subtask.assignee_id === user.id)
+        .map((subtask) => subtask.task_id),
+    ]);
+    return workspaceTasks.filter(
+      (task) => task.assignee_id === user.id || memberTaskIds.has(task.id),
+    );
+  }, [collaborators, isAdmin, subtasks, user?.id, workspaceTasks]);
   // The chart only includes users eligible to receive tasks (admins and collaborators).
   const { data: assignableProfiles = [] } = useAssignableProfiles();
   useColumns();

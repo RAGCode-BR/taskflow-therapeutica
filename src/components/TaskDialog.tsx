@@ -217,6 +217,14 @@ export function TaskDialog({
   const [saving, setSaving] = useState(false);
   const [previewAttachment, setPreviewAttachment] = useState<Attachment | null>(null);
   const canDeleteTask = !!currentTaskId && (!!isAdmin || !task || task.created_by === user?.id);
+  // Mesma regra do banco: só os envolvidos e os administradores editam a tarefa.
+  const canEditTask =
+    !task ||
+    !!isAdmin ||
+    task.created_by === user?.id ||
+    task.assignee_id === user?.id ||
+    (!!user?.id && collaboratorIds.includes(user.id)) ||
+    subtasks.some((subtask) => subtask.assignee_id === user?.id);
   // A participant can update a task, but only its creator, responsible person
   // or an administrator may change the list of other participants.
   const canManageCollaborators =
@@ -1300,7 +1308,14 @@ export function TaskDialog({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-h-[90vh] max-w-4xl gap-0 overflow-y-auto rounded-lg p-0 shadow-2xl">
         <DialogHeader className="border-b bg-muted/20 px-6 py-5">
-          <DialogTitle className="text-xl">{task ? "Editar tarefa" : "Nova tarefa"}</DialogTitle>
+          <DialogTitle className="text-xl">
+            {!task ? "Nova tarefa" : canEditTask ? "Editar tarefa" : "Tarefa"}
+          </DialogTitle>
+          {!canEditTask && (
+            <p className="text-sm text-muted-foreground">
+              Somente leitura: só os envolvidos na tarefa ou um administrador podem editá-la.
+            </p>
+          )}
         </DialogHeader>
 
         <div className="space-y-5 px-6 py-5">
@@ -1935,7 +1950,7 @@ export function TaskDialog({
               <Button variant="outline" onClick={() => onOpenChange(false)}>
                 Cancelar
               </Button>
-              <Button onClick={save} disabled={saving}>
+              <Button onClick={save} disabled={saving || !canEditTask}>
                 {saving ? "Salvando…" : "Salvar"}
               </Button>
             </div>

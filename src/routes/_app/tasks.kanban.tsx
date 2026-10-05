@@ -756,6 +756,23 @@ function KanbanPage() {
     [taskView, activeWorkspace?.id],
   );
 
+  // Mesma regra do banco: só os envolvidos e os administradores alteram a tarefa.
+  const editableTaskIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (!user?.id) return ids;
+    for (const subtask of allSubtasks as any[])
+      if (subtask.assignee_id === user.id && subtask.task_id) ids.add(subtask.task_id);
+    for (const task of taskView)
+      if (
+        isAdmin ||
+        task.assignee_id === user.id ||
+        task.created_by === user.id ||
+        collaboratorTaskIds.has(task.id)
+      )
+        ids.add(task.id);
+    return ids;
+  }, [allSubtasks, collaboratorTaskIds, isAdmin, taskView, user?.id]);
+
   const tasksByCol = useMemo(() => {
     const map = new Map<string, Task[]>();
     columns.forEach((c) => map.set(c.id, []));
@@ -1446,7 +1463,7 @@ function KanbanPage() {
                         key={t.id}
                         task={t}
                         orientation={orientation}
-                        disabled={sharedTaskIds.has(t.id)}
+                        disabled={sharedTaskIds.has(t.id) || !editableTaskIds.has(t.id)}
                         profiles={profiles}
                         columns={columns}
                         tags={tags}

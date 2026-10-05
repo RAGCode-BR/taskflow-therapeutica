@@ -192,20 +192,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       : (memberships[0] ?? null);
     setWorkspaces(memberships);
     setActiveWorkspaceState(selectedWorkspace);
-    setPermissions(
-      admin
-        ? systemPermissions
-        : (selectedWorkspace?.permissions ??
-            (Array.isArray(access?.permissions) ? access.permissions : [])),
-    );
+    // A cópia do ambiente pode vir vazia (usuário recém-criado); nesse caso vale
+    // a lista do cadastro do usuário, a mesma marcada na página Usuários.
+    const userPermissions = Array.isArray(access?.permissions) ? access.permissions : [];
+    const effectivePermissions = admin
+      ? systemPermissions
+      : selectedWorkspace?.permissions?.length
+        ? selectedWorkspace.permissions
+        : userPermissions;
+    setPermissions(effectivePermissions);
     saveOfflineAccess(uid, {
       profile: prof ? ({ ...prof, email: authUser?.email ?? null, login } as Profile) : null,
       isAdmin: admin,
       isCollaborator: collaborator,
-      permissions: admin
-        ? systemPermissions
-        : (selectedWorkspace?.permissions ??
-          (Array.isArray(access?.permissions) ? access.permissions : [])),
+      permissions: effectivePermissions,
       workspaces: memberships,
       activeWorkspace: selectedWorkspace,
     });

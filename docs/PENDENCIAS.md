@@ -1,32 +1,35 @@
 # Pendências — Therapeutica Task Flow
 
-Lista viva do que ainda precisa ser corrigido ou decidido. Atualizada em 25/09/2026.
+Lista viva do que ainda precisa ser corrigido ou decidido. Atualizada em 05/10/2026.
 Itens concluídos saem da lista; o histórico fica no Git.
 
 ## 1. Bloqueia o próximo deploy
 
-- [ ] **Deploy automático:** o workflow `.github/workflows/deploy-cloudflare.yml` publica a cada
-  push na `main`, mas só funciona depois de cadastrar no GitHub os segredos
-  `CLOUDFLARE_API_TOKEN`, `CLOUDFLARE_ACCOUNT_ID`, `VITE_SUPABASE_URL` e
-  `VITE_SUPABASE_PUBLISHABLE_KEY`. Até lá, publicar com `npm run deploy:cloudflare`.
+Nada no momento. O deploy é automático a cada push na `main` (GitHub Actions → Cloudflare).
 
-## 2. Segurança (da análise de 24/09)
+## 2. Segurança (análise de 24/09, revisada em 05/10)
 
-- [ ] **Crítica — permissões só no frontend.** No banco, qualquer membro do ambiente lê e
-  altera tudo (policies `FOR ALL` só checam `has_workspace_access`). Exigir no RLS o papel
-  admin/colaborador e a permissão da página. Contas antigas do papel "client" continuam
-  membros do ambiente: revisar e desativar/converter.
-- [ ] **Crítica — senhas de sistemas de clientes em texto claro** (`client_system_accesses`),
-  legíveis por qualquer membro via API. Com clientes removidos da interface: avaliar apagar ou
-  mover para Vault.
-- [ ] Bucket `task-attachments` (e `service-request-attachments`) legível por qualquer usuário
-  logado, inclusive anexos de conversas das quais ele não participa.
-- [ ] Token do Instagram/Meta legível via API (`client_social_accounts.access_token`). Com
-  clientes removidos: revogar acesso à coluna ou apagar os tokens; despublicar as Edge
-  Functions `instagram-*`.
-- [ ] `auth-middleware.ts` libera acesso sem login se faltar variável de ambiente
-  (fail-open). Confirmar variáveis no Cloudflare e fazer falhar fechado.
-- [ ] `createTasksFromAta` usa a service role sem checar papel/permissão.
+Corrigido em 05/10 (`20261005150000_enforce_permissions_in_database.sql`, sonda como
+colaborador comum): apagar ou mandar para a lixeira tarefas de outras pessoas, alterar colunas
+do Kanban, alterar reuniões sem a permissão "Reuniões", ler anexos de conversas alheias;
+acesso sem login quando falta configuração no servidor; criação de tarefas pela ata sem checar
+permissão. Já estavam bloqueados: virar admin, alterar permissões/perfis alheios, ler
+comentários alheios, criar avisos para outros. Senhas e tokens de clientes: tabelas vazias.
+Também em 05/10 (`20261005170000`): editar tarefa só envolvidos e admins (Kanban não arrasta
+card alheio; janela da tarefa fica somente leitura). Decidido manter: quem tem a permissão
+"Reuniões" pode excluir reuniões e departamentos; Gabriel e Reinan continuam admins.
+Também em 05/10 (`20261005190000`): colaborador só **lê** as tarefas de que participa ou que
+criou (inclusive subtarefas, colaboradores, etiquetas, histórico e anexos) e só as reuniões
+em que é participante, responsável ou criador. Dashboard do colaborador conta só as dele.
+
+- [ ] Bucket `service-request-attachments` legível por qualquer usuário logado.
+- [ ] Excluir um departamento apaga só as reuniões que quem exclui consegue ver; as demais
+  ficam sem departamento. Na prática quem exclui é admin (vê todas).
+- [ ] Usuários novos são criados com a cópia de permissões do ambiente vazia
+  (`admin-user-access` só grava `user_permissions`). Corrigido na tela (usa o cadastro quando
+  a cópia está vazia) e nos dados em 05/10; falta a Edge Function gravar as duas listas.
+- [ ] Tabelas de clientes com segredos (`client_system_accesses`, `client_social_accounts`)
+  estão vazias; apagar as tabelas e as Edge Functions `instagram-*` na limpeza de clientes.
 - [ ] XSS na exportação PDF do Kanban (cores sem escape em `innerHTML`).
 - [ ] OAuth Google/Meta: `state` preso ao usuário e não ao navegador (CSRF), sem PKCE.
 - [ ] `complete-password-change` troca a senha sem exigir a flag `must_change_password`.
