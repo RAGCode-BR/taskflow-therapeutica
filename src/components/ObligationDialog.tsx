@@ -101,7 +101,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
   const [endDate, setEndDate] = useState("");
   const [dueTime, setDueTime] = useState("");
   const [reminderDays, setReminderDays] = useState(2);
-  const [autoCreateTasks, setAutoCreateTasks] = useState(true);
+  const [autoCreateTasks, setAutoCreateTasks] = useState(false);
   const [taskDaysBefore, setTaskDaysBefore] = useState(0);
   const { data: allParticipants } = useObligationParticipants();
   const { data: departmentMembers = [] } = useDepartmentMembers();
@@ -130,7 +130,7 @@ export function ObligationDialog({ open, onOpenChange, obligation }: ObligationD
     setEndDate(obligation?.end_date ?? "");
     setDueTime(obligation?.due_time?.slice(0, 5) ?? "");
     setReminderDays(obligation?.reminder_days_before ?? 2);
-    setAutoCreateTasks(obligation?.auto_create_tasks ?? true);
+    setAutoCreateTasks(obligation?.auto_create_tasks ?? false);
     setTaskDaysBefore(obligation?.create_before_days ?? 0);
     setParticipantIds([]);
     setParticipantsTouched(false);

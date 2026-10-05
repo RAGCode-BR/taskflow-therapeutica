@@ -56,8 +56,9 @@ em que é participante, responsável ou criador. Dashboard do colaborador conta 
   `storage.objects` (liberado com `storage.allow_delete_query`). O arquivo físico pode ficar
   órfão no bucket; o ideal é apagar pela Storage API (Edge Function). Até 30/09 esse trigger
   impedia concluir qualquer tarefa.
-- [ ] Tarefas automáticas da pauta: itens incluídos na reunião depois da criação só ganham
-  tarefa na próxima rotina (abrir Reuniões ou 7h).
+- [ ] Tarefas automáticas da pauta **desligadas em 05/10** em todas as reuniões (opção mantida
+  no formulário, desmarcada). Se alguém ligar: itens incluídos depois só ganham tarefa na
+  próxima rotina (abrir Reuniões ou 7h).
 - [ ] Tarefas automáticas não geram avisos (criação nem conclusão pela reunião). Se a
   equipe sentir falta, avaliar um resumo único por reunião em vez de um aviso por tarefa.
 - [ ] Clientes (dados mantidos de propósito): decidir no futuro se apaga tabelas/colunas de
