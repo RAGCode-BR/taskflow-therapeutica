@@ -55,6 +55,8 @@ Itens concluídos saem da lista; o histórico fica no Git.
   impedia concluir qualquer tarefa.
 - [ ] Tarefas automáticas da pauta: itens incluídos na reunião depois da criação só ganham
   tarefa na próxima rotina (abrir Reuniões ou 7h).
+- [ ] Tarefas automáticas não geram avisos (criação nem conclusão pela reunião). Se a
+  equipe sentir falta, avaliar um resumo único por reunião em vez de um aviso por tarefa.
 - [ ] Clientes (dados mantidos de propósito): decidir no futuro se apaga tabelas/colunas de
   clientes e os triggers `prevent_inactive_client_*` e `archive_inactive_client_operations`.
 
