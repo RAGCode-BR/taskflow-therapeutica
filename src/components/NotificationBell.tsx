@@ -1,3 +1,4 @@
+/* eslint-disable @typescript-eslint/no-explicit-any -- Supabase types are regenerated after migrations are applied. */
 import { useEffect, useState } from "react";
 import { Bell, Check, Trash2 } from "lucide-react";
 import { useNavigate } from "@tanstack/react-router";
@@ -94,10 +95,12 @@ export function NotificationBell() {
   }, [user?.id]);
 
   const unread = items.filter((n) => !n.is_read).length;
+  const pendingItems = items.filter((notification) => !notification.is_read).slice(0, 2);
 
   const markRead = async (id: string) => {
     await (supabase.from("notifications") as any).update({ is_read: true }).eq("id", id);
     setItems((prev) => prev.map((n) => (n.id === id ? { ...n, is_read: true } : n)));
+    await qc.invalidateQueries({ queryKey: ["meeting-reminders"] });
   };
 
   const markAllRead = async () => {
@@ -108,6 +111,7 @@ export function NotificationBell() {
       .eq("is_read", false)
       .not("type", "in", `(${[...NAVIGATION_NOTIFICATION_TYPES].join(",")})`);
     setItems((prev) => prev.map((n) => ({ ...n, is_read: true })));
+    await qc.invalidateQueries({ queryKey: ["meeting-reminders"] });
   };
 
   const remove = async (id: string) => {
@@ -119,7 +123,7 @@ export function NotificationBell() {
     if (!n.is_read) await markRead(n.id);
     setOpen(false);
     if (n.type === "obligation_meeting" && n.obligation_occurrence_id) {
-      navigate({ to: "/obligations", search: { meeting: n.obligation_occurrence_id } });
+      navigate({ to: "/meetings", search: { meeting: n.obligation_occurrence_id } });
       return;
     }
     if (n.task_id) {
@@ -151,16 +155,20 @@ export function NotificationBell() {
               {unread > 0 ? `${unread} não lidas` : "Tudo em dia"}
             </p>
           </div>
-          <Button size="sm" variant="ghost" disabled={unread === 0} onClick={markAllRead}>
-            <Check className="mr-1 h-3.5 w-3.5" />
-            Marcar todas
-          </Button>
+          {unread > 2 && (
+            <Button size="sm" variant="ghost" onClick={markAllRead}>
+              <Check className="mr-1 h-3.5 w-3.5" />
+              Marcar todas como lidas
+            </Button>
+          )}
         </div>
         <div className="max-h-[420px] overflow-y-auto">
-          {items.length === 0 && (
-            <p className="px-4 py-8 text-center text-sm text-muted-foreground">Sem notificações</p>
+          {pendingItems.length === 0 && (
+            <p className="px-4 py-8 text-center text-sm text-muted-foreground">
+              Sem notificações novas
+            </p>
           )}
-          {items.map((n) => (
+          {pendingItems.map((n) => (
             <div
               key={n.id}
               className={`group relative flex cursor-pointer gap-3 border-b px-4 py-3 text-sm transition hover:bg-muted/50 ${
@@ -193,6 +201,12 @@ export function NotificationBell() {
               </Button>
             </div>
           ))}
+          {unread > 2 && (
+            <div className="border-t bg-muted/20 px-4 py-2 text-center text-xs text-muted-foreground">
+              Mais {unread - 2}{" "}
+              {unread - 2 === 1 ? "notificação pendente" : "notificações pendentes"}
+            </div>
+          )}
         </div>
       </PopoverContent>
     </Popover>

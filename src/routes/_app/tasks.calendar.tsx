@@ -38,6 +38,7 @@ import {
 } from "@/components/ui/dialog";
 import { normalizeTasksWithOpenSubtasks } from "@/lib/task-utils";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
+import { useTaskTitleSearch } from "@/hooks/use-task-title-search";
 
 const TASK_BACKGROUND_COLOR = "#475569";
 
@@ -46,6 +47,7 @@ export const Route = createFileRoute("/_app/tasks/calendar")({
 });
 
 function CalendarPage() {
+  const { titleQuery } = useTaskTitleSearch();
   const { data: tasks = [] } = useTasks();
   const { data: columns = [] } = useColumns();
   const { data: subtasks = [] } = useSubtasks();
@@ -132,17 +134,22 @@ function CalendarPage() {
 
   const visible = useMemo(
     () =>
-      applyTaskFilters(taskView, filters, {
-        userId: user?.id ?? null,
-        subtaskAssigneeTaskIds,
-        collaboratorTaskIds,
-        subtaskAssigneeTaskIdsByUser,
-        collaboratorTaskIdsByUser,
-        restrictToCurrentUserParticipation: isCollaborator,
-      }),
+      applyTaskFilters(
+        taskView,
+        { ...filters, titleQuery },
+        {
+          userId: user?.id ?? null,
+          subtaskAssigneeTaskIds,
+          collaboratorTaskIds,
+          subtaskAssigneeTaskIdsByUser,
+          collaboratorTaskIdsByUser,
+          restrictToCurrentUserParticipation: isCollaborator,
+        },
+      ),
     [
       taskView,
       filters,
+      titleQuery,
       user?.id,
       isCollaborator,
       subtaskAssigneeTaskIds,

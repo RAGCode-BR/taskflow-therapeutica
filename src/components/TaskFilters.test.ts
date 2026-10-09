@@ -3,6 +3,7 @@ import { applyTaskFilters } from "./TaskFilters";
 
 const task = (id: string, assignee_id: string | null) => ({
   id,
+  title: id,
   assignee_id,
   priority: "medium",
   column_id: null,
@@ -11,6 +12,23 @@ const task = (id: string, assignee_id: string | null) => ({
   due_date: null,
   status: "todo",
   completed_at: null,
+});
+
+describe("applyTaskFilters — busca por título", () => {
+  const tasks = [
+    { ...task("t1", "andrea"), title: "Relatório financeiro mensal" },
+    { ...task("t2", "haila"), title: "Planejamento de marketing" },
+  ];
+
+  it("busca por parte do título sem diferenciar maiúsculas e minúsculas", () => {
+    const result = applyTaskFilters(tasks, { titleQuery: "FINANCEIRO" });
+    expect(result.map((item) => item.id)).toEqual(["t1"]);
+  });
+
+  it("ignora espaços nas extremidades da busca", () => {
+    const result = applyTaskFilters(tasks, { titleQuery: "  marketing  " });
+    expect(result.map((item) => item.id)).toEqual(["t2"]);
+  });
 });
 
 describe("applyTaskFilters — filtro por pessoa", () => {

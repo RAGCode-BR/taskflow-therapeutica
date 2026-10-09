@@ -60,6 +60,7 @@ export function MeetingReminderPopup() {
   });
 
   const visible = reminders.filter((reminder) => !dismissed.includes(reminder.id));
+  const shownReminders = visible.slice(0, 2);
 
   const markRead = async (ids: string[]) => {
     if (ids.length === 0) return;
@@ -81,7 +82,7 @@ export function MeetingReminderPopup() {
     await markRead([reminder.id]);
     if (reminder.obligation_occurrence_id) {
       void navigate({
-        to: "/obligations",
+        to: "/meetings",
         search: { meeting: reminder.obligation_occurrence_id },
       });
     }
@@ -100,7 +101,7 @@ export function MeetingReminderPopup() {
           </DialogDescription>
         </DialogHeader>
         <ul className="space-y-2">
-          {visible.map((reminder) => (
+          {shownReminders.map((reminder) => (
             <li
               key={reminder.id}
               className="flex items-center justify-between gap-3 rounded-lg border p-3"
@@ -112,12 +113,18 @@ export function MeetingReminderPopup() {
             </li>
           ))}
         </ul>
+        {visible.length > 2 && (
+          <p className="text-center text-xs text-muted-foreground">
+            Mais {visible.length - 2}{" "}
+            {visible.length - 2 === 1 ? "lembrete pendente" : "lembretes pendentes"}
+          </p>
+        )}
         <DialogFooter className="gap-2">
           <Button
             variant="ghost"
             onClick={() => void markRead(visible.map((reminder) => reminder.id))}
           >
-            Marcar como vistos
+            {visible.length > 2 ? "Marcar todas como lidas" : "Marcar como vistas"}
           </Button>
           <Button variant="outline" onClick={later}>
             Depois

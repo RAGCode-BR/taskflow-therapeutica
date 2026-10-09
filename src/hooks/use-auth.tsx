@@ -177,6 +177,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       "dashboard",
       "tasks",
       "conversations",
+      "meetings",
       "obligations",
       "reports",
       "mural",

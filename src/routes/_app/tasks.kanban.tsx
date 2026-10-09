@@ -47,6 +47,7 @@ import {
   PanelTop,
   PanelsTopLeft,
   ChevronDown,
+  X,
 } from "lucide-react";
 import {
   Select,
@@ -91,6 +92,7 @@ import { duplicateTask as duplicateTaskWithContents } from "@/lib/duplicate-task
 import { TaskDialog } from "@/components/TaskDialog";
 import { TagManagerDialog } from "@/components/TagManagerDialog";
 import { TaskFilters, applyTaskFilters, type TaskFilterValue } from "@/components/TaskFilters";
+import { useTaskTitleSearch } from "@/hooks/use-task-title-search";
 import { WorkspaceTaskFilter } from "@/components/WorkspaceTaskFilter";
 import { CardFieldsPopover } from "@/components/CardFieldsPopover";
 import { useBoardPreferences, useUpdateBoardPreferences } from "@/hooks/use-board-preferences";
@@ -364,6 +366,7 @@ function SortableColumn({
 }
 
 function KanbanPage() {
+  const { titleQuery } = useTaskTitleSearch();
   const qc = useQueryClient();
   const { user, isAdmin, isCollaborator, activeWorkspace } = useAuth();
   const { data: tasks = [] } = useTasks();
@@ -570,15 +573,19 @@ function KanbanPage() {
       // Padrão: apenas as concluídas de hoje
       return ref >= startToday && ref <= endToday;
     });
-    all = applyTaskFilters(all, filters, {
-      userId: user?.id ?? null,
-      subtaskAssigneeTaskIds,
-      collaboratorTaskIds,
-      subtaskAssigneeTaskIdsByUser,
-      collaboratorTaskIdsByUser,
-      subtaskDateFilterTaskIds,
-      restrictToCurrentUserParticipation: isCollaborator,
-    });
+    all = applyTaskFilters(
+      all,
+      { ...filters, titleQuery },
+      {
+        userId: user?.id ?? null,
+        subtaskAssigneeTaskIds,
+        collaboratorTaskIds,
+        subtaskAssigneeTaskIdsByUser,
+        collaboratorTaskIdsByUser,
+        subtaskDateFilterTaskIds,
+        restrictToCurrentUserParticipation: isCollaborator,
+      },
+    );
     all.sort((a, b) => {
       let cmp = 0;
       switch (sort.field) {
@@ -629,6 +636,7 @@ function KanbanPage() {
     taskView,
     activeWorkspace?.id,
     filters,
+    titleQuery,
     sort,
     tagNameForTask,
     completedRange,
@@ -649,20 +657,25 @@ function KanbanPage() {
 
   const filtered = useMemo(() => {
     let r = taskView.filter((t) => t.status !== "done" && !t.completed_at);
-    r = applyTaskFilters(r, filters, {
-      userId: user?.id ?? null,
-      subtaskAssigneeTaskIds,
-      collaboratorTaskIds,
-      subtaskAssigneeTaskIdsByUser,
-      collaboratorTaskIdsByUser,
-      subtaskDateFilterTaskIds,
-      restrictToCurrentUserParticipation: isCollaborator,
-    });
+    r = applyTaskFilters(
+      r,
+      { ...filters, titleQuery },
+      {
+        userId: user?.id ?? null,
+        subtaskAssigneeTaskIds,
+        collaboratorTaskIds,
+        subtaskAssigneeTaskIdsByUser,
+        collaboratorTaskIdsByUser,
+        subtaskDateFilterTaskIds,
+        restrictToCurrentUserParticipation: isCollaborator,
+      },
+    );
     return r;
   }, [
     taskView,
     activeWorkspace?.id,
     filters,
+    titleQuery,
     user?.id,
     subtaskAssigneeTaskIds,
     collaboratorTaskIds,
@@ -1282,129 +1295,158 @@ function KanbanPage() {
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="shrink-0 border-b bg-background px-3 py-2">
-        <div className="flex items-center justify-end gap-2">
-          <div className="flex flex-wrap gap-2">
-            <Button variant="outline" className="rounded-full" onClick={() => setTagsOpen(true)}>
-              Etiquetas
-            </Button>
-            {isAdmin && (
-              <Button variant="outline" className="rounded-full" onClick={addColumn}>
-                <Plus className="mr-2 h-4 w-4" />
-                Coluna
-              </Button>
-            )}
-            <Button
-              className="h-9 rounded-full px-5 shadow-sm"
-              onClick={() => {
-                setEditTask(null);
-                setDefaultCol(columns[0]?.id ?? null);
-                setDialogOpen(true);
-              }}
-            >
-              <Plus className="mr-2 h-4 w-4" />
-              Tarefa
-            </Button>
-          </div>
-        </div>
-        <div className="mt-2 space-y-1">
-          <TaskFilters filters={filters} onChange={setFilters} hideAssignee={isCollaborator}>
-            <div className="flex flex-wrap items-center justify-end gap-2">
-              <WorkspaceTaskFilter
-                value={filters.workspace}
-                onChange={(workspace) => setFilters({ ...filters, workspace })}
-              />
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-7 gap-1 rounded-full"
-                onClick={switchOrientation}
-                disabled={updatePrefs.isPending}
-                title={
-                  orientation === "horizontal" ? "Mudar para vertical" : "Mudar para horizontal"
-                }
-              >
-                {orientation === "horizontal" ? (
-                  <Rows className="h-3.5 w-3.5" />
-                ) : (
-                  <Columns className="h-3.5 w-3.5" />
-                )}
-                {orientation === "horizontal" ? "Vertical" : "Horizontal"}
-              </Button>
-              <Button
-                size="sm"
-                variant={minimalCards ? "default" : "outline"}
-                className="h-7 gap-1 rounded-full"
-                onClick={toggleMinimalCards}
-                title={minimalCards ? "Exibir cards completos" : "Exibir cards minimalistas"}
-              >
-                {minimalCards ? (
-                  <PanelsTopLeft className="h-3.5 w-3.5" />
-                ) : (
-                  <PanelTop className="h-3.5 w-3.5" />
-                )}
-                {minimalCards ? "Completo" : "Minimalista"}
-              </Button>{" "}
-              <CardFieldsPopover />
-            </div>
-            <div className="mr-3 inline-flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-              <span className="font-medium text-foreground">Concluídas no período</span>
-              <Input
-                type="date"
-                value={completedRange.start}
-                onChange={(e) =>
-                  setCompletedRange((range) => ({ ...range, start: e.target.value }))
-                }
-                className="h-7 w-36 rounded-full"
-              />
-              <span>até</span>
-              <Input
-                type="date"
-                value={completedRange.end}
-                onChange={(e) => setCompletedRange((range) => ({ ...range, end: e.target.value }))}
-                className="h-7 w-36 rounded-full"
-              />
-              {completedRange.start || completedRange.end ? (
+        <div className="space-y-1">
+          <TaskFilters
+            filters={filters}
+            onChange={setFilters}
+            hideAssignee={isCollaborator}
+            actions={
+              <>
                 <Button
-                  variant="ghost"
+                  variant="outline"
                   size="sm"
-                  className="h-7"
-                  onClick={() => setCompletedRange({ start: "", end: "" })}
+                  className="h-8 rounded-full px-3.5 text-xs"
+                  onClick={() => setTagsOpen(true)}
                 >
-                  Limpar período
+                  Etiquetas
                 </Button>
-              ) : null}
-            </div>
-            <div className="inline-flex items-center gap-1.5">
-              <span className="text-xs font-medium text-muted-foreground">Ordenar por</span>
-              <Select
-                value={sort.field}
-                onValueChange={(v) => setSort((s) => ({ ...s, field: v as SortField }))}
-              >
-                <SelectTrigger className="h-7 w-40 rounded-full">
-                  <SelectValue placeholder="Escolher critério" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="due_date">Prazo</SelectItem>
-                  <SelectItem value="priority">Prioridade</SelectItem>
-                  <SelectItem value="created_at">Data de criação</SelectItem>
-                </SelectContent>
-              </Select>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 rounded-full"
-                onClick={() =>
-                  setSort((s) => ({ ...s, direction: s.direction === "asc" ? "desc" : "asc" }))
-                }
-                title={sort.direction === "asc" ? "Ordem crescente" : "Ordem decrescente"}
-                aria-label={sort.direction === "asc" ? "Ordem crescente" : "Ordem decrescente"}
-              >
-                {sort.direction === "asc" ? (
-                  <ArrowUp className="h-3.5 w-3.5" />
-                ) : (
-                  <ArrowDown className="h-3.5 w-3.5" />
+                {isAdmin && (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="h-8 rounded-full px-3.5 text-xs"
+                    onClick={addColumn}
+                  >
+                    <Plus className="mr-1.5 h-3.5 w-3.5" />
+                    Coluna
+                  </Button>
                 )}
-              </Button>
+                <Button
+                  size="sm"
+                  className="h-8 rounded-full px-4 text-xs shadow-sm"
+                  onClick={() => {
+                    setEditTask(null);
+                    setDefaultCol(columns[0]?.id ?? null);
+                    setDialogOpen(true);
+                  }}
+                >
+                  <Plus className="mr-1.5 h-3.5 w-3.5" />
+                  Tarefa
+                </Button>
+              </>
+            }
+          >
+            <div className="space-y-2">
+              <span className="block text-sm font-semibold text-muted-foreground">
+                Visualização
+              </span>
+              <div className="flex min-h-11 flex-wrap items-center gap-2">
+                <WorkspaceTaskFilter
+                  value={filters.workspace}
+                  onChange={(workspace) => setFilters({ ...filters, workspace })}
+                />
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-11 gap-2 rounded-xl px-4"
+                  onClick={switchOrientation}
+                  disabled={updatePrefs.isPending}
+                  title={
+                    orientation === "horizontal" ? "Mudar para vertical" : "Mudar para horizontal"
+                  }
+                >
+                  {orientation === "horizontal" ? (
+                    <Rows className="h-3.5 w-3.5" />
+                  ) : (
+                    <Columns className="h-3.5 w-3.5" />
+                  )}
+                  {orientation === "horizontal" ? "Vertical" : "Horizontal"}
+                </Button>
+                <Button
+                  size="sm"
+                  variant={minimalCards ? "default" : "outline"}
+                  className="h-11 gap-2 rounded-xl px-4"
+                  onClick={toggleMinimalCards}
+                  title={minimalCards ? "Exibir cards completos" : "Exibir cards minimalistas"}
+                >
+                  {minimalCards ? (
+                    <PanelsTopLeft className="h-3.5 w-3.5" />
+                  ) : (
+                    <PanelTop className="h-3.5 w-3.5" />
+                  )}
+                  {minimalCards ? "Completo" : "Minimalista"}
+                </Button>{" "}
+                <CardFieldsPopover />
+              </div>
+            </div>
+            <div className="space-y-2">
+              <span className="block text-sm font-semibold text-muted-foreground">
+                Concluídas no período
+              </span>
+              <div className="flex min-h-11 items-center gap-2">
+                <Input
+                  type="date"
+                  value={completedRange.start}
+                  onChange={(e) =>
+                    setCompletedRange((range) => ({ ...range, start: e.target.value }))
+                  }
+                  className="h-11 min-w-0 flex-1 rounded-xl"
+                />
+                <span className="text-sm text-muted-foreground">até</span>
+                <Input
+                  type="date"
+                  value={completedRange.end}
+                  onChange={(e) =>
+                    setCompletedRange((range) => ({ ...range, end: e.target.value }))
+                  }
+                  className="h-11 min-w-0 flex-1 rounded-xl"
+                />
+                {completedRange.start || completedRange.end ? (
+                  <Button
+                    variant="ghost"
+                    size="icon"
+                    className="h-10 w-10 shrink-0 rounded-full"
+                    onClick={() => setCompletedRange({ start: "", end: "" })}
+                    title="Limpar período"
+                  >
+                    <X className="h-4 w-4" />
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <span className="block text-sm font-semibold text-muted-foreground">Organização</span>
+              <div className="flex min-h-11 items-center gap-2">
+                <Select
+                  value={sort.field}
+                  onValueChange={(v) => setSort((s) => ({ ...s, field: v as SortField }))}
+                >
+                  <SelectTrigger className="h-11 min-w-0 flex-1 rounded-xl">
+                    <SelectValue placeholder="Escolher critério" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="due_date">Prazo</SelectItem>
+                    <SelectItem value="priority">Prioridade</SelectItem>
+                    <SelectItem value="created_at">Data de criação</SelectItem>
+                  </SelectContent>
+                </Select>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-11 w-11 shrink-0 rounded-xl"
+                  onClick={() =>
+                    setSort((s) => ({ ...s, direction: s.direction === "asc" ? "desc" : "asc" }))
+                  }
+                  title={sort.direction === "asc" ? "Ordem crescente" : "Ordem decrescente"}
+                  aria-label={sort.direction === "asc" ? "Ordem crescente" : "Ordem decrescente"}
+                >
+                  {sort.direction === "asc" ? (
+                    <ArrowUp className="h-4 w-4" />
+                  ) : (
+                    <ArrowDown className="h-4 w-4" />
+                  )}
+                </Button>
+              </div>
             </div>
           </TaskFilters>
         </div>

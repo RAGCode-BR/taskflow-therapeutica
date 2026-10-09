@@ -19,15 +19,27 @@ import { useAuth } from "@/hooks/use-auth";
 import { TaskFilters, applyTaskFilters, type TaskFilterValue } from "@/components/TaskFilters";
 import { WorkspaceTaskFilter } from "@/components/WorkspaceTaskFilter";
 import { TaskDialog } from "@/components/TaskDialog";
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "@/components/ui/dialog";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { priorityColors, priorityLabels, dueUrgencyState, dueUrgencyTextClass } from "@/lib/task-utils";
+import {
+  priorityColors,
+  priorityLabels,
+  dueUrgencyState,
+  dueUrgencyTextClass,
+} from "@/lib/task-utils";
 import { matchDateFilter, type DateFilter } from "@/lib/task-utils";
 import { useQueryClient } from "@tanstack/react-query";
 import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { duplicateTask as duplicateTaskWithContents } from "@/lib/duplicate-task";
 import { updateTaskWithOfflineSupport } from "@/lib/offline-task-mutations";
+import { useTaskTitleSearch } from "@/hooks/use-task-title-search";
 
 export const Route = createFileRoute("/_app/tasks/list")({
   component: ListPage,
@@ -38,6 +50,7 @@ export const Route = createFileRoute("/_app/tasks/list")({
 });
 
 function ListPage() {
+  const { titleQuery } = useTaskTitleSearch();
   const { data: tasks = [] } = useTasks();
   const { data: columns = [] } = useColumns();
   const { data: profiles = [] } = useProfiles();
@@ -63,9 +76,7 @@ function ListPage() {
   useEffect(() => {
     if (!user?.id) return;
     if (isCollaborator) {
-      setFilters((current) =>
-        current.assignee ? { ...current, assignee: undefined } : current,
-      );
+      setFilters((current) => (current.assignee ? { ...current, assignee: undefined } : current));
       return;
     }
     if (didApplyDefaultAssignee.current) return;
@@ -127,7 +138,12 @@ function ListPage() {
   }, [subtasks, filters.date]);
 
   const collaboratorTaskIds = useMemo(
-    () => new Set(collaborators.filter((collaborator) => collaborator.collaborator_id === user?.id).map((collaborator) => collaborator.task_id)),
+    () =>
+      new Set(
+        collaborators
+          .filter((collaborator) => collaborator.collaborator_id === user?.id)
+          .map((collaborator) => collaborator.task_id),
+      ),
     [collaborators, user?.id],
   );
 
@@ -159,15 +175,19 @@ function ListPage() {
   };
 
   const list = useMemo(() => {
-    const r = applyTaskFilters(tasks, filters, {
-      userId: user?.id ?? null,
-      subtaskAssigneeTaskIds,
-      collaboratorTaskIds,
-      subtaskAssigneeTaskIdsByUser,
-      collaboratorTaskIdsByUser,
-      subtaskDateFilterTaskIds,
-      restrictToCurrentUserParticipation: isCollaborator,
-    });
+    const r = applyTaskFilters(
+      tasks,
+      { ...filters, titleQuery },
+      {
+        userId: user?.id ?? null,
+        subtaskAssigneeTaskIds,
+        collaboratorTaskIds,
+        subtaskAssigneeTaskIdsByUser,
+        collaboratorTaskIdsByUser,
+        subtaskDateFilterTaskIds,
+        restrictToCurrentUserParticipation: isCollaborator,
+      },
+    );
     const getDueTimestamp = (task: Task) => {
       if (!task.due_date) return null;
       const dueDate = new Date(task.due_date);
@@ -195,7 +215,19 @@ function ListPage() {
       const dueDateDifference = aDueTimestamp - bDueTimestamp;
       return dueDateSortDirection === "asc" ? dueDateDifference : -dueDateDifference;
     });
-  }, [tasks, filters, user?.id, isCollaborator, subtaskAssigneeTaskIds, collaboratorTaskIds, subtaskAssigneeTaskIdsByUser, collaboratorTaskIdsByUser, subtaskDateFilterTaskIds, dueDateSortDirection]);
+  }, [
+    tasks,
+    filters,
+    titleQuery,
+    user?.id,
+    isCollaborator,
+    subtaskAssigneeTaskIds,
+    collaboratorTaskIds,
+    subtaskAssigneeTaskIdsByUser,
+    collaboratorTaskIdsByUser,
+    subtaskDateFilterTaskIds,
+    dueDateSortDirection,
+  ]);
 
   const completeTask = async (taskId: string) => {
     const completedStatus = statuses.find((status) => status.is_completed);
@@ -217,7 +249,11 @@ function ListPage() {
       ({ queued } = await updateTaskWithOfflineSupport({
         userId: user.id,
         task,
-        patch: { status: "done", status_id: completedStatus.id, completed_at: new Date().toISOString() },
+        patch: {
+          status: "done",
+          status_id: completedStatus.id,
+          completed_at: new Date().toISOString(),
+        },
         queryClient,
       }));
     } catch (cause: any) {
@@ -289,146 +325,216 @@ function ListPage() {
                   Nenhuma tarefa
                 </td>
               </tr>
-            ) : list.map((t, index) => {
-              const assignee = profiles.find((p) => p.id === t.assignee_id);
-              const isCompleted = t.status === "done" || !!t.completed_at;
-              const previousTask = list[index - 1];
-              const startsCompletedSection =
-                isCompleted &&
-                (!previousTask || (previousTask.status !== "done" && !previousTask.completed_at));
-              const currentColumn = columns.find((column) => column.id === t.column_id);
-              const completedStatus = statuses.find((status) => status.is_completed);
-              const storedStatus = statuses.find((status) => status.id === t.status_id);
-              // The Kanban card's current state is its column. Only completed
-              // tasks use the dedicated completion status instead of the column.
-              const displayStatus = isCompleted
-                ? {
-                    name: completedStatus?.name ?? "Concluída",
-                    color: completedStatus?.color ?? "#22c55e",
-                  }
-                : currentColumn
-                  ? { name: currentColumn.name, color: currentColumn.color || "#64748b" }
-                  : storedStatus
-                    ? {
-                        name: storedStatus.name,
-                        color: storedStatus.color,
-                      }
-                    : null;
-              const dueTextClass = dueUrgencyTextClass[dueUrgencyState(t)];
-              const taskCollaborators = collaborators.filter((collaborator) => collaborator.task_id === t.id).map((collaborator) => profiles.find((profile) => profile.id === collaborator.collaborator_id)).filter(Boolean);
+            ) : (
+              list.map((t, index) => {
+                const assignee = profiles.find((p) => p.id === t.assignee_id);
+                const isCompleted = t.status === "done" || !!t.completed_at;
+                const previousTask = list[index - 1];
+                const startsCompletedSection =
+                  isCompleted &&
+                  (!previousTask || (previousTask.status !== "done" && !previousTask.completed_at));
+                const currentColumn = columns.find((column) => column.id === t.column_id);
+                const completedStatus = statuses.find((status) => status.is_completed);
+                const storedStatus = statuses.find((status) => status.id === t.status_id);
+                // The Kanban card's current state is its column. Only completed
+                // tasks use the dedicated completion status instead of the column.
+                const displayStatus = isCompleted
+                  ? {
+                      name: completedStatus?.name ?? "Concluída",
+                      color: completedStatus?.color ?? "#22c55e",
+                    }
+                  : currentColumn
+                    ? { name: currentColumn.name, color: currentColumn.color || "#64748b" }
+                    : storedStatus
+                      ? {
+                          name: storedStatus.name,
+                          color: storedStatus.color,
+                        }
+                      : null;
+                const dueTextClass = dueUrgencyTextClass[dueUrgencyState(t)];
+                const taskCollaborators = collaborators
+                  .filter((collaborator) => collaborator.task_id === t.id)
+                  .map((collaborator) =>
+                    profiles.find((profile) => profile.id === collaborator.collaborator_id),
+                  )
+                  .filter(Boolean);
 
-              return (
-                <Fragment key={t.id}>
-                {startsCompletedSection && (
-                  <tr aria-label="Tarefas concluídas">
-                    <td colSpan={7} className="px-2 py-2">
-                      <button type="button" onClick={() => setCompletedOpen((current) => !current)} className="flex w-full items-center gap-3 border-t border-dashed border-muted-foreground/45 pt-2 text-left">
-                        <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">Tarefas concluídas</span>
-                        <span className="h-px flex-1 border-t border-dashed border-muted-foreground/30" />
-                        <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${completedOpen ? "" : "-rotate-90"}`} />
-                      </button>
-                    </td>
-                  </tr>
-                )}
-                {isCompleted && !completedOpen ? null :
-                <tr
-                  className={`cursor-pointer border-t transition-colors hover:bg-muted/30 ${
-                    isCompleted ? "opacity-60 grayscale-[0.2]" : ""
-                  }`}
-                  onClick={() => {
-                    setEdit(t);
-                    setOpen(true);
-                  }}
-                >
-                  <td className="border-r px-2 py-2 font-medium"><span className="block truncate">{t.title}</span></td>
-                  <td className="border-r px-2 py-2 text-muted-foreground">
-                    {assignee?.full_name || assignee?.email || "—"}
-                  </td>
-                  <td className="border-r px-2 py-2">
-                    {taskCollaborators.length > 0 ? (
-                      <div className="flex -space-x-1" title={taskCollaborators.map((p: any) => p.full_name || p.email).join(", ")}>
-                        {taskCollaborators.slice(0, 3).map((person: any) => {
-                          const name = person.full_name || person.email || "Usuário";
-                          return <Avatar key={person.id} className="h-5 w-5 border border-background"><AvatarImage src={person.avatar_url || undefined} alt={name} /><AvatarFallback className="text-[8px]">{name.slice(0, 1).toUpperCase()}</AvatarFallback></Avatar>;
-                        })}
-                        {taskCollaborators.length > 3 ? <span className="ml-1 text-[10px] text-muted-foreground">+{taskCollaborators.length - 3}</span> : null}
-                      </div>
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="border-r px-2 py-2">
-                    {displayStatus ? (
-                      <Badge variant="outline" className="max-w-full truncate" style={{ borderColor: displayStatus.color, color: displayStatus.color }}>
-                        {displayStatus.name}
-                      </Badge>
-                    ) : <span className="text-muted-foreground">—</span>}
-                  </td>
-                  <td className="border-r px-2 py-2">
-                    {t.priority ? (
-                      <Badge
-                        variant="outline"
-                        style={{
-                          borderColor: priorityColors[t.priority],
-                          color: priorityColors[t.priority],
-                        }}
-                      >
-                        {priorityLabels[t.priority]}
-                      </Badge>
-                    ) : (
-                      <span className="text-muted-foreground">—</span>
+                return (
+                  <Fragment key={t.id}>
+                    {startsCompletedSection && (
+                      <tr aria-label="Tarefas concluídas">
+                        <td colSpan={7} className="px-2 py-2">
+                          <button
+                            type="button"
+                            onClick={() => setCompletedOpen((current) => !current)}
+                            className="flex w-full items-center gap-3 border-t border-dashed border-muted-foreground/45 pt-2 text-left"
+                          >
+                            <span className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                              Tarefas concluídas
+                            </span>
+                            <span className="h-px flex-1 border-t border-dashed border-muted-foreground/30" />
+                            <ChevronDown
+                              className={`h-4 w-4 text-muted-foreground transition-transform ${completedOpen ? "" : "-rotate-90"}`}
+                            />
+                          </button>
+                        </td>
+                      </tr>
                     )}
-                  </td>
-                  <td className={`border-r px-2 py-2 whitespace-nowrap ${dueTextClass}`}>
-                    {t.due_date
-                      ? `${format(new Date(t.due_date), "dd MMM yyyy", { locale: ptBR })}${t.due_time ? ` · ${t.due_time.slice(0, 5)}` : ""}`
-                      : "—"}
-                  </td>
-                  <td className="px-1 py-2 text-center">
-                    <div className="flex items-center justify-center gap-0.5">
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Duplicar tarefa"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setDuplicateTaskTarget(t);
-                          setDuplicateDueDate("");
+                    {isCompleted && !completedOpen ? null : (
+                      <tr
+                        className={`cursor-pointer border-t transition-colors hover:bg-muted/30 ${
+                          isCompleted ? "opacity-60 grayscale-[0.2]" : ""
+                        }`}
+                        onClick={() => {
+                          setEdit(t);
+                          setOpen(true);
                         }}
                       >
-                        <Copy className="h-4 w-4" />
-                      </Button>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        title="Concluir tarefa"
-                        disabled={t.completed_at !== null}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          void completeTask(t.id);
-                        }}
-                      >
-                        <Check className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </td>
-                </tr>
-                }
-                </Fragment>
-              );
-            })}
+                        <td className="border-r px-2 py-2 font-medium">
+                          <span className="block truncate">{t.title}</span>
+                        </td>
+                        <td className="border-r px-2 py-2 text-muted-foreground">
+                          {assignee?.full_name || assignee?.email || "—"}
+                        </td>
+                        <td className="border-r px-2 py-2">
+                          {taskCollaborators.length > 0 ? (
+                            <div
+                              className="flex -space-x-1"
+                              title={taskCollaborators
+                                .map((p: any) => p.full_name || p.email)
+                                .join(", ")}
+                            >
+                              {taskCollaborators.slice(0, 3).map((person: any) => {
+                                const name = person.full_name || person.email || "Usuário";
+                                return (
+                                  <Avatar
+                                    key={person.id}
+                                    className="h-5 w-5 border border-background"
+                                  >
+                                    <AvatarImage src={person.avatar_url || undefined} alt={name} />
+                                    <AvatarFallback className="text-[8px]">
+                                      {name.slice(0, 1).toUpperCase()}
+                                    </AvatarFallback>
+                                  </Avatar>
+                                );
+                              })}
+                              {taskCollaborators.length > 3 ? (
+                                <span className="ml-1 text-[10px] text-muted-foreground">
+                                  +{taskCollaborators.length - 3}
+                                </span>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="border-r px-2 py-2">
+                          {displayStatus ? (
+                            <Badge
+                              variant="outline"
+                              className="max-w-full truncate"
+                              style={{
+                                borderColor: displayStatus.color,
+                                color: displayStatus.color,
+                              }}
+                            >
+                              {displayStatus.name}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className="border-r px-2 py-2">
+                          {t.priority ? (
+                            <Badge
+                              variant="outline"
+                              style={{
+                                borderColor: priorityColors[t.priority],
+                                color: priorityColors[t.priority],
+                              }}
+                            >
+                              {priorityLabels[t.priority]}
+                            </Badge>
+                          ) : (
+                            <span className="text-muted-foreground">—</span>
+                          )}
+                        </td>
+                        <td className={`border-r px-2 py-2 whitespace-nowrap ${dueTextClass}`}>
+                          {t.due_date
+                            ? `${format(new Date(t.due_date), "dd MMM yyyy", { locale: ptBR })}${t.due_time ? ` · ${t.due_time.slice(0, 5)}` : ""}`
+                            : "—"}
+                        </td>
+                        <td className="px-1 py-2 text-center">
+                          <div className="flex items-center justify-center gap-0.5">
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title="Duplicar tarefa"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setDuplicateTaskTarget(t);
+                                setDuplicateDueDate("");
+                              }}
+                            >
+                              <Copy className="h-4 w-4" />
+                            </Button>
+                            <Button
+                              size="icon"
+                              variant="ghost"
+                              title="Concluir tarefa"
+                              disabled={t.completed_at !== null}
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                void completeTask(t.id);
+                              }}
+                            >
+                              <Check className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        </td>
+                      </tr>
+                    )}
+                  </Fragment>
+                );
+              })
+            )}
           </tbody>
         </table>
       </div>
       <TaskDialog open={open} onOpenChange={setOpen} task={edit} />
-      <Dialog open={!!duplicateTaskTarget} onOpenChange={(isOpen) => !isOpen && !duplicatingTask && setDuplicateTaskTarget(null)}>
+      <Dialog
+        open={!!duplicateTaskTarget}
+        onOpenChange={(isOpen) => !isOpen && !duplicatingTask && setDuplicateTaskTarget(null)}
+      >
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Duplicar tarefa</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Duplicar tarefa</DialogTitle>
+          </DialogHeader>
           <div className="space-y-2">
-            <p className="text-sm text-muted-foreground">Defina o novo prazo para a cópia de “{duplicateTaskTarget?.title}”.</p>
-            <Input type="date" value={duplicateDueDate} onChange={(event) => setDuplicateDueDate(event.target.value)} required />
+            <p className="text-sm text-muted-foreground">
+              Defina o novo prazo para a cópia de “{duplicateTaskTarget?.title}”.
+            </p>
+            <Input
+              type="date"
+              value={duplicateDueDate}
+              onChange={(event) => setDuplicateDueDate(event.target.value)}
+              required
+            />
           </div>
           <DialogFooter>
-            <Button variant="outline" disabled={duplicatingTask} onClick={() => setDuplicateTaskTarget(null)}>Cancelar</Button>
-            <Button disabled={!duplicateDueDate || duplicatingTask} onClick={() => void duplicateTask()}>{duplicatingTask ? "Duplicando…" : "Duplicar"}</Button>
+            <Button
+              variant="outline"
+              disabled={duplicatingTask}
+              onClick={() => setDuplicateTaskTarget(null)}
+            >
+              Cancelar
+            </Button>
+            <Button
+              disabled={!duplicateDueDate || duplicatingTask}
+              onClick={() => void duplicateTask()}
+            >
+              {duplicatingTask ? "Duplicando…" : "Duplicar"}
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>

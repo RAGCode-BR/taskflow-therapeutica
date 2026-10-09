@@ -1,51 +1,64 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- Supabase types are regenerated after the migration is applied. */
-import { createFileRoute, Navigate, useNavigate } from "@tanstack/react-router";
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createFileRoute, Navigate } from "@tanstack/react-router";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { addDays, differenceInCalendarDays, format } from "date-fns";
+import {
+  addDays,
+  addMonths,
+  eachDayOfInterval,
+  endOfMonth,
+  endOfWeek,
+  format,
+  isSameDay,
+  isSameMonth,
+  startOfMonth,
+  startOfWeek,
+  subMonths,
+} from "date-fns";
 import { ptBR } from "date-fns/locale";
 import {
+  AlertTriangle,
+  CalendarCheck2,
   CalendarClock,
   CheckCircle2,
-  ChevronDown,
+  ChevronLeft,
   ChevronRight,
   Clock3,
-  ClipboardList,
+  ExternalLink,
   Loader2,
   Pause,
   Pencil,
   Play,
   Plus,
-  RotateCcw,
   Search,
   Settings2,
   Trash2,
-  Users,
 } from "lucide-react";
 import { toast } from "sonner";
 import { supabase } from "@/integrations/supabase/client";
 import { useAuth } from "@/hooks/use-auth";
 import { enqueueOfflineOperation, isOffline } from "@/lib/offline-sync";
-import { useProfiles, useTaskStatuses, type Profile, type Task } from "@/hooks/use-data";
+import {
+  useAssignableProfiles,
+  useColumns,
+  useProfiles,
+  useTaskStatuses,
+  type KanbanColumn,
+  type Profile,
+  type Task,
+  type TaskStatus,
+} from "@/hooks/use-data";
 import { useWorkspaceTasks } from "@/hooks/use-workspace-tasks";
 import {
-  useAllObligationTaskTemplates,
-  useDepartmentMembers,
-  useObligationAgendaItems,
-  useObligationAgendaPreview,
-  useObligationDepartments,
   useObligationOccurrences,
-  useObligationParticipants,
   useObligations,
-  type AgendaItemResult,
-  type DepartmentMember,
   type Obligation,
-  type ObligationAgendaItem,
-  type ObligationDepartment,
   type ObligationOccurrence,
 } from "@/hooks/use-obligations";
-import { ObligationDialog } from "@/components/ObligationDialog";
+import { ClassicObligationDialog } from "@/components/ClassicObligationDialog";
+import { RichTextEditor } from "@/components/RichTextEditor";
 import { TaskDialog } from "@/components/TaskDialog";
+import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -69,7 +82,13 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import { Label } from "@/components/ui/label";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
 import {
   Select,
   SelectContent,
@@ -79,234 +98,382 @@ import {
 } from "@/components/ui/select";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-export const Route = createFileRoute("/_app/obligations")({
-  // ?meeting=<id> abre a reunião direto (usado pelos avisos do sininho e do pop-up).
-  validateSearch: (search: Record<string, unknown>): { meeting?: string } => ({
-    meeting: typeof search.meeting === "string" ? search.meeting : undefined,
-  }),
-  component: ObligationsPage,
-});
+export const Route = createFileRoute("/_app/obligations")({ component: ObligationsPage });
 
 const todayKey = () => format(new Date(), "yyyy-MM-dd");
 
-/** Quantas datas de reunião aparecem antes de "Mostrar mais semanas". */
-const DATES_PER_PAGE = 4;
+type DeleteTarget =
+  | { scope: "occurrences"; occurrences: ObligationOccurrence[] }
+  | { scope: "series"; obligation: Obligation }
+  | { scope: "series-batch"; obligations: Obligation[] }
+  | { scope: "all" };
 
-/** Cores de departamento em tons que conversam com a marca Therapeutica. */
-const DEPARTMENT_PALETTE = ["#5D6E3E", "#EC643F", "#B7821F", "#3E6E6A", "#7B5A7A", "#626161"];
-const DEFAULT_DEPARTMENT_COLOR = "#64748b";
+type BulkTaskUpdates = {
+  title?: string;
+  description?: string | null;
+  status?: Task["status"];
+  status_id?: string | null;
+  completed_at?: string | null;
+  column_id?: string | null;
+  assignee_id?: string | null;
+  priority?: Task["priority"];
+  due_date?: string | null;
+  due_time?: string | null;
+};
 
-/** Usa a cor do departamento; sem cor definida, distribui a paleta pela ordem. */
-function departmentColor(department: ObligationDepartment | null, order: Map<string, number>) {
-  if (!department) return "#9a9a93";
-  if (department.color && department.color.toLowerCase() !== DEFAULT_DEPARTMENT_COLOR)
-    return department.color;
-  return DEPARTMENT_PALETTE[(order.get(department.id) ?? 0) % DEPARTMENT_PALETTE.length];
-}
-
-function relativeDay(dateKey: string) {
-  const days = differenceInCalendarDays(new Date(`${dateKey}T12:00:00`), new Date());
-  if (days === 0) return "hoje";
-  if (days === 1) return "amanhã";
-  if (days === -1) return "ontem";
-  return days > 1 ? `em ${days} dias` : `há ${-days} dias`;
-}
-
-const isClosed = (occurrence: ObligationOccurrence) =>
-  occurrence.status === "completed" || occurrence.status === "skipped";
-
-type AgendaRow = {
-  /** Item já copiado para a reunião; ausente enquanto a pauta ainda é prevista. */
-  item: ObligationAgendaItem | null;
-  templateId: string | null;
-  title: string;
+type BulkTaskChanges = {
+  updates: BulkTaskUpdates;
+  collaboratorIds?: string[];
+  dueDateReason?: string;
 };
 
 function ObligationsPage() {
-  const { hasPermission, loading, activeWorkspace, user } = useAuth();
+  const { hasPermission, loading, activeWorkspace, user, isAdmin } = useAuth();
   const queryClient = useQueryClient();
-  const navigate = useNavigate();
-  const { meeting: meetingFromLink } = Route.useSearch();
-  const { data: obligations = [], isLoading, error: obligationsError } = useObligations();
-  const { data: occurrences = [], isLoading: loadingOccurrences } = useObligationOccurrences();
-  const { data: agendaItems = [] } = useObligationAgendaItems();
-  const { data: participants = [] } = useObligationParticipants();
-  const { data: departmentMembers = [] } = useDepartmentMembers();
-  const { data: taskTemplates = [] } = useAllObligationTaskTemplates();
+  const {
+    data: obligations = [],
+    isLoading: loadingObligations,
+    error: obligationsError,
+  } = useObligations(false);
+  const {
+    data: occurrences = [],
+    isLoading: loadingOccurrences,
+    error: occurrencesError,
+  } = useObligationOccurrences(false);
   const { data: profiles = [] } = useProfiles();
+  const { data: assignableProfiles = [] } = useAssignableProfiles();
+  const { data: columns = [] } = useColumns();
   const { data: taskStatuses = [] } = useTaskStatuses();
   const { data: tasks = [] } = useWorkspaceTasks();
-  const { data: departments = [] } = useObligationDepartments();
-  const cycledWorkspace = useRef<string | null>(null);
+  const materializedWorkspace = useRef<string | null>(null);
   const [dialogOpen, setDialogOpen] = useState(false);
   const [editingObligation, setEditingObligation] = useState<Obligation | null>(null);
-  const [departmentsOpen, setDepartmentsOpen] = useState(false);
-  const [meetingId, setMeetingId] = useState<string | null>(null);
+  const [taskDialogOpen, setTaskDialogOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [search, setSearch] = useState("");
-  const [departmentFilter, setDepartmentFilter] = useState("all");
-  const [participantFilter, setParticipantFilter] = useState("all");
-  const [datesShown, setDatesShown] = useState(DATES_PER_PAGE);
-  const [deleteTarget, setDeleteTarget] = useState<Obligation | null>(null);
+  const [assigneeFilter, setAssigneeFilter] = useState("all");
+  const [calendarCursor, setCalendarCursor] = useState(new Date());
+  const [workingOccurrenceId, setWorkingOccurrenceId] = useState<string | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<DeleteTarget | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [selectedOccurrenceIds, setSelectedOccurrenceIds] = useState<string[]>([]);
+  const [bulkEditOccurrenceIds, setBulkEditOccurrenceIds] = useState<string[]>([]);
+  const [bulkEditOpen, setBulkEditOpen] = useState(false);
 
-  // Gera reuniões, copia pautas e dispara avisos pendentes (também roda todo dia às 7h).
   useEffect(() => {
-    if (isOffline() || !activeWorkspace?.id || cycledWorkspace.current === activeWorkspace.id)
+    // A materialização é uma rotina do servidor. Offline, a última lista de
+    // vencimentos persistida é exibida sem tentar chamar o banco.
+    if (isOffline() || !activeWorkspace?.id || materializedWorkspace.current === activeWorkspace.id)
       return;
-    cycledWorkspace.current = activeWorkspace.id;
+    materializedWorkspace.current = activeWorkspace.id;
     void (async () => {
-      const { error } = await (supabase as any).rpc("run_obligation_cycle");
+      const { error } = await (supabase as any).rpc("materialize_obligations", {
+        p_horizon_days: 365,
+      });
       if (error) {
-        cycledWorkspace.current = null;
+        materializedWorkspace.current = null;
         if (/failed to fetch/i.test(error.message ?? "")) return;
-        toast.error(`Não foi possível atualizar as próximas reuniões: ${error.message}`);
+        toast.error(`Não foi possível atualizar os próximos vencimentos: ${error.message}`);
         return;
       }
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
-        queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] }),
+        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
       ]);
     })();
   }, [activeWorkspace?.id, queryClient]);
-
-  // Aviso do sininho ou do pop-up: abre a reunião indicada no link.
-  useEffect(() => {
-    if (!meetingFromLink || loadingOccurrences) return;
-    if (occurrences.some((occurrence) => occurrence.id === meetingFromLink)) {
-      setMeetingId(meetingFromLink);
-    } else {
-      toast.error("Esta reunião não está mais disponível.");
-    }
-    void navigate({ to: "/obligations", search: {}, replace: true });
-  }, [loadingOccurrences, meetingFromLink, navigate, occurrences]);
 
   const obligationById = useMemo(
     () => new Map(obligations.map((obligation) => [obligation.id, obligation])),
     [obligations],
   );
-  const departmentById = useMemo(
-    () => new Map(departments.map((department) => [department.id, department])),
-    [departments],
-  );
   const profileById = useMemo(
     () => new Map(profiles.map((profile) => [profile.id, profile])),
     [profiles],
   );
-  const participantsByObligation = useMemo(() => {
-    const grouped = new Map<string, string[]>();
-    participants.forEach(({ obligation_id, user_id }) => {
-      grouped.set(obligation_id, [...(grouped.get(obligation_id) ?? []), user_id]);
-    });
-    return grouped;
-  }, [participants]);
-  const templateCountByObligation = useMemo(() => {
-    const counts = new Map<string, number>();
-    taskTemplates.forEach((template) =>
-      counts.set(template.obligation_id, (counts.get(template.obligation_id) ?? 0) + 1),
-    );
-    return counts;
-  }, [taskTemplates]);
-  const itemsByOccurrence = useMemo(() => {
-    const grouped = new Map<string, ObligationAgendaItem[]>();
-    agendaItems.forEach((item) => {
-      grouped.set(item.occurrence_id, [...(grouped.get(item.occurrence_id) ?? []), item]);
-    });
-    return grouped;
-  }, [agendaItems]);
-  const tasksByItem = useMemo(() => {
-    const grouped = new Map<string, Task[]>();
-    tasks.forEach((task) => {
-      if (!task.obligation_agenda_item_id) return;
-      const key = task.obligation_agenda_item_id;
-      grouped.set(key, [...(grouped.get(key) ?? []), task]);
-    });
-    return grouped;
-  }, [tasks]);
-  const completedStatusIds = useMemo(
-    () => new Set(taskStatuses.filter((status) => status.is_completed).map((status) => status.id)),
-    [taskStatuses],
+  const taskById = useMemo(() => new Map(tasks.map((task) => [task.id, task])), [tasks]);
+
+  const activeOccurrences = useMemo(
+    () =>
+      occurrences.filter((occurrence) => {
+        if (occurrence.status === "skipped") return false;
+        const obligation = obligationById.get(occurrence.obligation_id);
+        if (!obligation) return false;
+        if (assigneeFilter !== "all" && obligation.assignee_id !== assigneeFilter) return false;
+        const term = search.trim().toLocaleLowerCase("pt-BR");
+        if (!term) return true;
+        return obligation.title.toLocaleLowerCase("pt-BR").includes(term);
+      }),
+    [assigneeFilter, obligationById, occurrences, search],
   );
-  const isTaskDone = (task: Task) =>
-    task.status === "done" ||
-    Boolean(task.completed_at) ||
-    (!!task.status_id && completedStatusIds.has(task.status_id));
 
   const today = todayKey();
-  const visibleObligations = useMemo(() => {
-    const term = search.trim().toLocaleLowerCase("pt-BR");
-    return obligations.filter((obligation) => {
-      const department = departmentById.get(obligation.department_id ?? "");
-      if (departmentFilter !== "all" && obligation.department_id !== departmentFilter) return false;
-      if (
-        participantFilter !== "all" &&
-        obligation.assignee_id !== participantFilter &&
-        !(participantsByObligation.get(obligation.id) ?? []).includes(participantFilter)
+  const nextWeek = format(addDays(new Date(), 7), "yyyy-MM-dd");
+  const pendingOccurrences = activeOccurrences.filter(
+    (occurrence) => occurrence.status !== "completed" && occurrence.status !== "skipped",
+  );
+  const pendingItems = useMemo(
+    () =>
+      pendingOccurrences
+        .map((occurrence) => ({
+          occurrence,
+          obligation: obligationById.get(occurrence.obligation_id),
+        }))
+        .filter((item): item is { occurrence: ObligationOccurrence; obligation: Obligation } =>
+          Boolean(item.obligation),
+        ),
+    [obligationById, pendingOccurrences],
+  );
+  const pendingOccurrenceIds = pendingItems.map((item) => item.occurrence.id);
+  const selectedPendingItems = pendingItems.filter((item) =>
+    selectedOccurrenceIds.includes(item.occurrence.id),
+  );
+  const selectedPendingIds = selectedPendingItems.map((item) => item.occurrence.id);
+  const selectedPendingObligations = [
+    ...new Map(selectedPendingItems.map((item) => [item.obligation.id, item.obligation])).values(),
+  ];
+  const overdueCount = pendingOccurrences.filter(
+    (occurrence) => occurrence.due_date < today,
+  ).length;
+  const todayCount = pendingOccurrences.filter(
+    (occurrence) => occurrence.due_date === today,
+  ).length;
+  const weekCount = pendingOccurrences.filter(
+    (occurrence) => occurrence.due_date > today && occurrence.due_date <= nextWeek,
+  ).length;
+  const completedMonthCount = activeOccurrences.filter(
+    (occurrence) =>
+      occurrence.status === "completed" &&
+      occurrence.completed_at &&
+      isSameMonth(new Date(occurrence.completed_at), new Date()),
+  ).length;
+
+  const openTask = (occurrence: ObligationOccurrence) => {
+    const task = occurrence.task_id ? taskById.get(occurrence.task_id) : null;
+    if (!task) return toast.error("A tarefa desta ocorrência ainda não foi criada.");
+    setEditingTask(task);
+    setTaskDialogOpen(true);
+  };
+
+  const createTaskNow = async (occurrence: ObligationOccurrence) => {
+    const restoringDeletedTask = Boolean(occurrence.task_id && !taskById.has(occurrence.task_id));
+    setWorkingOccurrenceId(occurrence.id);
+    const { data, error } = await (supabase as any).rpc("create_obligation_task", {
+      target_occurrence_id: occurrence.id,
+    });
+    setWorkingOccurrenceId(null);
+    if (error) return toast.error(error.message);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+    ]);
+    toast.success(restoringDeletedTask ? "Tarefa restaurada" : "Tarefa criada");
+    const { data: refreshedTask } = await supabase
+      .from("tasks")
+      .select("*")
+      .eq("id", data as string)
+      .maybeSingle();
+    if (refreshedTask) {
+      setEditingTask(refreshedTask as Task);
+      setTaskDialogOpen(true);
+    }
+  };
+
+  const completeOccurrence = async (occurrence: ObligationOccurrence) => {
+    setWorkingOccurrenceId(occurrence.id);
+    const { error } = await (supabase as any).rpc("complete_obligation_occurrence", {
+      target_occurrence_id: occurrence.id,
+    });
+    setWorkingOccurrenceId(null);
+    if (error) return toast.error(error.message);
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+    ]);
+    toast.success("Obrigação concluída neste período");
+  };
+
+  const toggleOccurrenceSelection = (occurrenceId: string) => {
+    setSelectedOccurrenceIds((current) =>
+      current.includes(occurrenceId)
+        ? current.filter((id) => id !== occurrenceId)
+        : [...current, occurrenceId],
+    );
+  };
+
+  const selectOccurrences = (occurrenceIds: string[], selected: boolean) => {
+    setSelectedOccurrenceIds((current) => {
+      const next = new Set(current);
+      occurrenceIds.forEach((id) => (selected ? next.add(id) : next.delete(id)));
+      return [...next];
+    });
+  };
+
+  const saveBulkTaskChanges = async ({
+    updates,
+    collaboratorIds,
+    dueDateReason,
+  }: BulkTaskChanges) => {
+    const selectedOccurrences = bulkEditOccurrenceIds
+      .map((id) => occurrences.find((occurrence) => occurrence.id === id))
+      .filter((occurrence): occurrence is ObligationOccurrence => Boolean(occurrence));
+    const existingTaskIds = selectedOccurrences
+      .map((occurrence) => occurrence.task_id)
+      .filter((taskId): taskId is string => Boolean(taskId && taskById.has(taskId)));
+    const occurrencesToMaterialize = selectedOccurrences.filter(
+      (occurrence) => !occurrence.task_id || !taskById.has(occurrence.task_id),
+    );
+
+    const creationResults = await Promise.all(
+      occurrencesToMaterialize.map((occurrence) =>
+        (supabase as any).rpc("create_obligation_task", {
+          target_occurrence_id: occurrence.id,
+        }),
+      ),
+    );
+    const creationError = creationResults.find((result) => result.error)?.error;
+    if (creationError) {
+      toast.error(`Não foi possível preparar todas as tarefas: ${creationError.message}`);
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+        queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+      ]);
+      return false;
+    }
+
+    const taskIds = [
+      ...new Set([
+        ...existingTaskIds,
+        ...creationResults
+          .map((result) => result.data)
+          .filter((taskId): taskId is string => typeof taskId === "string"),
+      ]),
+    ];
+    if (taskIds.length === 0) {
+      toast.error("Nenhuma tarefa disponível para editar.");
+      return false;
+    }
+
+    const { data: currentTasks, error: currentTasksError } = await supabase
+      .from("tasks")
+      .select("id, due_date, created_by, assignee_id")
+      .in("id", taskIds);
+    if (currentTasksError) {
+      toast.error(currentTasksError.message);
+      return false;
+    }
+
+    if (
+      collaboratorIds &&
+      !isAdmin &&
+      (currentTasks ?? []).some(
+        (task: { created_by: string | null; assignee_id: string | null }) =>
+          task.created_by !== user?.id && task.assignee_id !== user?.id,
       )
-        return false;
-      if (!term) return true;
-      return `${obligation.title} ${department?.name ?? ""}`
-        .toLocaleLowerCase("pt-BR")
-        .includes(term);
-    });
-  }, [
-    departmentById,
-    departmentFilter,
-    obligations,
-    participantFilter,
-    participantsByObligation,
-    search,
-  ]);
-
-  const departmentOrder = useMemo(() => {
-    const sorted = [...departments].sort(
-      (first, second) =>
-        first.position - second.position || first.name.localeCompare(second.name, "pt-BR"),
-    );
-    return new Map(sorted.map((department, index) => [department.id, index]));
-  }, [departments]);
-
-  const routinesPerDepartment = useMemo(() => {
-    const counts = new Map<string, number>();
-    obligations.forEach((obligation) => {
-      const key = obligation.department_id ?? "none";
-      counts.set(key, (counts.get(key) ?? 0) + 1);
-    });
-    return counts;
-  }, [obligations]);
-
-  // Reuniões em aberto agrupadas por data: cada data é uma "rodada" de reuniões.
-  const { overdueMeetings, upcomingDates } = useMemo(() => {
-    const visibleIds = new Set(visibleObligations.map((obligation) => obligation.id));
-    const open = occurrences
-      .filter((occurrence) => visibleIds.has(occurrence.obligation_id) && !isClosed(occurrence))
-      .map((occurrence) => ({
-        occurrence,
-        obligation: obligationById.get(occurrence.obligation_id)!,
-      }))
-      .filter(({ obligation }) => obligation.is_active)
-      .sort(
-        (first, second) =>
-          first.occurrence.due_date.localeCompare(second.occurrence.due_date) ||
-          (departmentOrder.get(first.obligation.department_id ?? "") ?? 99) -
-            (departmentOrder.get(second.obligation.department_id ?? "") ?? 99),
+    ) {
+      toast.error(
+        "Você precisa ser criador ou responsável por todas as tarefas para substituir os participantes.",
       );
-    const byDate = new Map<string, typeof open>();
-    open
-      .filter(({ occurrence }) => occurrence.due_date >= today)
-      .forEach((entry) => {
-        const key = entry.occurrence.due_date;
-        byDate.set(key, [...(byDate.get(key) ?? []), entry]);
-      });
-    return {
-      overdueMeetings: open.filter(({ occurrence }) => occurrence.due_date < today),
-      upcomingDates: [...byDate.entries()].map(([date, meetings]) => ({ date, meetings })),
-    };
-  }, [departmentOrder, obligationById, occurrences, today, visibleObligations]);
+      return false;
+    }
 
-  const pendingOccurrencesOf = (obligationId: string) =>
-    occurrences.filter(
-      (occurrence) => occurrence.obligation_id === obligationId && !isClosed(occurrence),
+    if (updates.status === "done") {
+      const { data: incompleteSubtasks, error: subtasksError } = await supabase
+        .from("subtasks")
+        .select("id")
+        .in("task_id", taskIds)
+        .eq("done", false)
+        .limit(1);
+      if (subtasksError) {
+        toast.error(subtasksError.message);
+        return false;
+      }
+      if (incompleteSubtasks?.length) {
+        toast.error("Conclua as subtarefas pendentes antes de concluir as tarefas selecionadas.");
+        return false;
+      }
+    }
+
+    if (Object.keys(updates).length > 0) {
+      const { error } = await supabase.from("tasks").update(updates).in("id", taskIds);
+      if (error) {
+        toast.error(error.message);
+        return false;
+      }
+    }
+
+    if (collaboratorIds) {
+      const { error: deleteCollaboratorsError } = await (supabase.from("task_collaborators") as any)
+        .delete()
+        .in("task_id", taskIds);
+      if (deleteCollaboratorsError) {
+        toast.error(deleteCollaboratorsError.message);
+        return false;
+      }
+      if (collaboratorIds.length > 0) {
+        const { error: insertCollaboratorsError } = await (
+          supabase.from("task_collaborators") as any
+        ).insert(
+          taskIds.flatMap((taskId) =>
+            collaboratorIds.map((collaboratorId) => ({
+              task_id: taskId,
+              collaborator_id: collaboratorId,
+              added_by: user?.id ?? null,
+            })),
+          ),
+        );
+        if (insertCollaboratorsError) {
+          toast.error(insertCollaboratorsError.message);
+          return false;
+        }
+      }
+    }
+
+    if ("due_date" in updates && user?.id && dueDateReason) {
+      const changedDeadlines = (currentTasks ?? []).filter(
+        (task: { id: string; due_date: string | null }) =>
+          task.due_date && task.due_date !== updates.due_date,
+      );
+      if (changedDeadlines.length > 0) {
+        const { error: deadlineHistoryError } = await supabase.from("task_due_date_changes").insert(
+          changedDeadlines.map((task: { id: string; due_date: string | null }) => ({
+            task_id: task.id,
+            user_id: user.id,
+            old_due_date: task.due_date,
+            new_due_date: updates.due_date ?? null,
+            reason: dueDateReason,
+          })),
+        );
+        if (deadlineHistoryError) {
+          toast.warning("Prazos atualizados, mas não foi possível registrar a justificativa.");
+        }
+      }
+    }
+    if (user?.id) {
+      const { error: historyError } = await supabase.from("task_history").insert(
+        taskIds.map((taskId) => ({
+          task_id: taskId,
+          user_id: user.id,
+          action: "updated",
+          details: {
+            source: "obligations_bulk_edit",
+            fields: [...Object.keys(updates), ...(collaboratorIds ? ["collaborators"] : [])],
+          },
+        })),
+      );
+      if (historyError) console.error("Não foi possível registrar a edição em lote", historyError);
+    }
+
+    setSelectedOccurrenceIds((current) =>
+      current.filter((id) => !bulkEditOccurrenceIds.includes(id)),
     );
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
+      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
+    ]);
+    toast.success(`${taskIds.length} tarefa${taskIds.length === 1 ? " editada" : "s editadas"}`);
+    return true;
+  };
 
   const setObligationActive = async (obligation: Obligation, isActive: boolean) => {
     if (user && activeWorkspace?.id && isOffline()) {
@@ -317,10 +484,12 @@ function ObligationsPage() {
         entityId: obligation.id,
         payload: { table: "obligations", patch: { is_active: isActive } },
       });
-      queryClient.setQueryData<Obligation[]>(["obligations", activeWorkspace.id], (current = []) =>
-        current.map((item) =>
-          item.id === obligation.id ? { ...item, is_active: isActive } : item,
-        ),
+      queryClient.setQueryData<Obligation[]>(
+        ["obligations", activeWorkspace.id, false],
+        (current = []) =>
+          current.map((item) =>
+            item.id === obligation.id ? { ...item, is_active: isActive } : item,
+          ),
       );
       toast.success("Alteração salva neste aparelho. Será sincronizada ao reconectar.");
       return;
@@ -333,38 +502,148 @@ function ObligationsPage() {
       const { error: refreshError } = await (supabase as any).rpc("refresh_obligation", {
         target_obligation_id: obligation.id,
       });
-      if (refreshError) toast.error(`Reunião ativada, mas as próximas datas não foram geradas.`);
+      if (refreshError) {
+        return toast.error(
+          `Obrigação ativada, mas os próximos prazos não foram gerados: ${refreshError.message}`,
+        );
+      }
     }
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["obligations"] }),
       queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
     ]);
-    toast.success(isActive ? "Reunião ativada" : "Reunião pausada");
+    toast.success(isActive ? "Obrigação ativada" : "Obrigação pausada");
   };
 
   const confirmDelete = async () => {
     if (!deleteTarget) return;
-    if (isOffline()) return toast.error("Conecte-se à internet para excluir a reunião.");
     setDeleting(true);
-    const { error } = await (supabase.from("obligations" as any) as any)
-      .delete()
-      .eq("id", deleteTarget.id);
+    if (user && activeWorkspace?.id && isOffline()) {
+      const target = deleteTarget;
+      if (target.scope === "occurrences") {
+        await Promise.all(
+          target.occurrences.map((occurrence) =>
+            enqueueOfflineOperation({
+              userId: user.id,
+              entity: "record",
+              action: "update",
+              entityId: occurrence.id,
+              payload: { table: "obligation_occurrences", patch: { status: "skipped" } },
+            }),
+          ),
+        );
+        queryClient.setQueryData<any[]>(
+          ["obligation-occurrences", activeWorkspace.id, false],
+          (current = []) =>
+            current.map((item) =>
+              target.occurrences.some((occurrence) => occurrence.id === item.id)
+                ? { ...item, status: "skipped" }
+                : item,
+            ),
+        );
+      } else {
+        const ids =
+          target.scope === "series"
+            ? [target.obligation.id]
+            : target.scope === "series-batch"
+              ? target.obligations.map((item) => item.id)
+              : obligations.map((item) => item.id);
+        await Promise.all(
+          ids.map((id) =>
+            enqueueOfflineOperation({
+              userId: user.id,
+              entity: "record",
+              action: "delete",
+              entityId: id,
+              payload: { table: "obligations" },
+            }),
+          ),
+        );
+        queryClient.setQueryData<Obligation[]>(
+          ["obligations", activeWorkspace.id, false],
+          (current = []) => current.filter((item) => !ids.includes(item.id)),
+        );
+      }
+      setDeleting(false);
+      setDeleteTarget(null);
+      toast.success("Exclusão salva neste aparelho. Será sincronizada ao reconectar.");
+      return;
+    }
+    let error: { message: string } | null = null;
+
+    if (deleteTarget.scope === "occurrences") {
+      const result = await (supabase.from("obligation_occurrences" as any) as any)
+        .update({ status: "skipped" })
+        .in(
+          "id",
+          deleteTarget.occurrences.map((occurrence) => occurrence.id),
+        );
+      error = result.error;
+    } else if (deleteTarget.scope === "series") {
+      const result = await (supabase.from("obligations" as any) as any)
+        .delete()
+        .eq("id", deleteTarget.obligation.id);
+      error = result.error;
+    } else if (deleteTarget.scope === "series-batch") {
+      const result = await (supabase.from("obligations" as any) as any).delete().in(
+        "id",
+        deleteTarget.obligations.map((obligation) => obligation.id),
+      );
+      error = result.error;
+    } else if (deleteTarget.scope === "all" && activeWorkspace?.id) {
+      const result = await (supabase.from("obligations" as any) as any)
+        .delete()
+        .eq("workspace_id", activeWorkspace.id)
+        .eq("meeting_mode", false);
+      error = result.error;
+    }
+
     setDeleting(false);
     if (error) return toast.error(error.message);
+    const scope = deleteTarget.scope;
+    if (scope === "occurrences") {
+      const deletedIds = new Set(deleteTarget.occurrences.map((occurrence) => occurrence.id));
+      setSelectedOccurrenceIds((current) => current.filter((id) => !deletedIds.has(id)));
+    } else if (scope === "series") {
+      const deletedOccurrenceIds = new Set(
+        occurrences
+          .filter((occurrence) => occurrence.obligation_id === deleteTarget.obligation.id)
+          .map((occurrence) => occurrence.id),
+      );
+      setSelectedOccurrenceIds((current) => current.filter((id) => !deletedOccurrenceIds.has(id)));
+    } else if (scope === "series-batch") {
+      const deletedObligationIds = new Set(
+        deleteTarget.obligations.map((obligation) => obligation.id),
+      );
+      const deletedOccurrenceIds = new Set(
+        occurrences
+          .filter((occurrence) => deletedObligationIds.has(occurrence.obligation_id))
+          .map((occurrence) => occurrence.id),
+      );
+      setSelectedOccurrenceIds((current) => current.filter((id) => !deletedOccurrenceIds.has(id)));
+    } else {
+      setSelectedOccurrenceIds([]);
+    }
     setDeleteTarget(null);
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: ["obligations"] }),
       queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] }),
     ]);
-    toast.success("Reunião excluída");
+    toast.success(
+      scope === "occurrences"
+        ? "Vencimentos selecionados excluídos"
+        : scope === "series"
+          ? "Obrigação e seus vencimentos foram excluídos"
+          : scope === "series-batch"
+            ? "Obrigação e todos os seus vencimentos foram excluídos"
+            : "Todas as obrigações foram excluídas",
+    );
   };
 
   if (loading) return <div className="p-6 text-sm text-muted-foreground">Carregando...</div>;
   if (!hasPermission("obligations")) return <Navigate to="/dashboard" />;
 
-  const meeting = meetingId ? occurrences.find((occurrence) => occurrence.id === meetingId) : null;
-  const meetingObligation = meeting ? (obligationById.get(meeting.obligation_id) ?? null) : null;
+  const pageError = obligationsError || occurrencesError;
 
   return (
     <div className="space-y-5 p-6">
@@ -372,37 +651,50 @@ function ObligationsPage() {
         <div>
           <div className="flex items-center gap-2">
             <CalendarClock className="h-6 w-6 text-primary" />
-            <h1 className="text-2xl font-semibold tracking-tight">Reuniões</h1>
+            <h1 className="text-2xl font-semibold tracking-tight">Obrigações</h1>
           </div>
           <p className="mt-1 text-sm text-muted-foreground">
-            Reuniões recorrentes por departamento: pauta, resultado de cada item e tarefas geradas.
+            Controle compromissos recorrentes e gere tarefas no momento certo.
           </p>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            variant="outline"
-            className="h-9 rounded-full px-4"
-            onClick={() => setDepartmentsOpen(true)}
-          >
-            <Users className="mr-2 h-4 w-4" /> Departamentos
-          </Button>
-          <Button
-            className="h-9 rounded-full px-4 shadow-sm"
-            onClick={() => {
-              setEditingObligation(null);
-              setDialogOpen(true);
-            }}
-          >
-            <Plus className="mr-2 h-4 w-4" /> Nova reunião recorrente
-          </Button>
-        </div>
+        <Button
+          className="h-9 rounded-full px-4 shadow-sm"
+          onClick={() => {
+            setEditingObligation(null);
+            setDialogOpen(true);
+          }}
+        >
+          <Plus className="mr-2 h-4 w-4" /> Nova obrigação
+        </Button>
       </header>
 
-      {obligationsError ? (
+      {pageError ? (
         <div className="rounded-xl border border-destructive/30 bg-destructive/10 p-4 text-sm text-destructive">
-          Não foi possível carregar as reuniões: {(obligationsError as Error).message}
+          Não foi possível carregar as obrigações: {(pageError as Error).message}
         </div>
       ) : null}
+
+      <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        <MetricCard
+          label="Atrasadas"
+          value={overdueCount}
+          icon={AlertTriangle}
+          tone="destructive"
+        />
+        <MetricCard label="Vencem hoje" value={todayCount} icon={Clock3} tone="warning" />
+        <MetricCard
+          label="Próximos 7 dias"
+          value={weekCount}
+          icon={CalendarCheck2}
+          tone="primary"
+        />
+        <MetricCard
+          label="Concluídas no mês"
+          value={completedMonthCount}
+          icon={CheckCircle2}
+          tone="success"
+        />
+      </div>
 
       <div className="flex flex-wrap gap-2 rounded-xl border bg-card p-3">
         <div className="relative min-w-[220px] flex-1">
@@ -410,29 +702,16 @@ function ObligationsPage() {
           <Input
             value={search}
             onChange={(event) => setSearch(event.target.value)}
-            placeholder="Buscar reunião ou departamento..."
+            placeholder="Buscar obrigação..."
             className="pl-9"
           />
         </div>
-        <Select value={departmentFilter} onValueChange={setDepartmentFilter}>
+        <Select value={assigneeFilter} onValueChange={setAssigneeFilter}>
           <SelectTrigger className="w-52">
-            <SelectValue placeholder="Todos os departamentos" />
+            <SelectValue placeholder="Todos os responsáveis" />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="all">Todos os departamentos</SelectItem>
-            {departments.map((department) => (
-              <SelectItem key={department.id} value={department.id}>
-                {department.name}
-              </SelectItem>
-            ))}
-          </SelectContent>
-        </Select>
-        <Select value={participantFilter} onValueChange={setParticipantFilter}>
-          <SelectTrigger className="w-52">
-            <SelectValue placeholder="Todos os participantes" />
-          </SelectTrigger>
-          <SelectContent>
-            <SelectItem value="all">Todos os participantes</SelectItem>
+            <SelectItem value="all">Todos os responsáveis</SelectItem>
             {profiles.map((profile) => (
               <SelectItem key={profile.id} value={profile.id}>
                 {profile.full_name || profile.email || "Usuário"}
@@ -442,268 +721,288 @@ function ObligationsPage() {
         </Select>
       </div>
 
-      <Tabs defaultValue="meetings">
+      <Tabs defaultValue="upcoming">
         <TabsList>
-          <TabsTrigger value="meetings">Reuniões</TabsTrigger>
-          <TabsTrigger value="settings">Rotinas</TabsTrigger>
+          <TabsTrigger value="upcoming">Próximas</TabsTrigger>
+          <TabsTrigger value="calendar">Calendário</TabsTrigger>
+          <TabsTrigger value="settings">Configurações</TabsTrigger>
         </TabsList>
 
-        <TabsContent value="meetings" className="mt-5">
-          {isLoading || loadingOccurrences ? (
+        <TabsContent value="upcoming" className="mt-4">
+          {loadingObligations || loadingOccurrences ? (
             <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
               <Loader2 className="h-4 w-4 animate-spin" />
-              Carregando reuniões...
+              Carregando vencimentos...
             </div>
-          ) : obligations.length === 0 ? (
+          ) : pendingOccurrences.length === 0 ? (
             <EmptyState
-              title="Nenhuma reunião cadastrada"
-              description="Crie a reunião recorrente de um departamento e monte a pauta padrão dela."
-            />
-          ) : overdueMeetings.length === 0 && upcomingDates.length === 0 ? (
-            <EmptyState
-              title="Nenhuma reunião encontrada"
-              description="Ajuste a busca ou os filtros, ou ative uma rotina pausada em Rotinas."
+              title="Nenhum vencimento pendente"
+              description="Crie uma obrigação para começar a acompanhar os próximos prazos."
             />
           ) : (
-            <div className="space-y-8">
-              {overdueMeetings.length > 0 && (
-                <MeetingDateGroup
-                  tone="overdue"
-                  numeral={String(overdueMeetings.length)}
-                  caption={overdueMeetings.length === 1 ? "atrasada" : "atrasadas"}
-                  heading="Sem encerramento"
-                  hint="Reuniões que já passaram e ainda têm itens sem resultado."
-                >
-                  {overdueMeetings.map(({ occurrence, obligation }) => (
-                    <MeetingRow
-                      key={occurrence.id}
-                      occurrence={occurrence}
-                      dateLabel={format(new Date(`${occurrence.due_date}T12:00:00`), "dd/MM")}
-                      obligation={obligation}
-                      department={departmentById.get(obligation.department_id ?? "") ?? null}
-                      color={departmentColor(
-                        departmentById.get(obligation.department_id ?? "") ?? null,
-                        departmentOrder,
-                      )}
-                      showTitle={
-                        (routinesPerDepartment.get(obligation.department_id ?? "none") ?? 0) > 1
-                      }
-                      assignee={profileById.get(obligation.assignee_id ?? "") ?? null}
-                      items={itemsByOccurrence.get(occurrence.id) ?? []}
-                      templateCount={templateCountByObligation.get(obligation.id) ?? 0}
-                      tasksByItem={tasksByItem}
-                      onOpen={() => setMeetingId(occurrence.id)}
-                    />
-                  ))}
-                </MeetingDateGroup>
-              )}
-              {upcomingDates.slice(0, datesShown).map(({ date, meetings }) => {
-                const day = new Date(`${date}T12:00:00`);
-                return (
-                  <MeetingDateGroup
-                    key={date}
-                    tone={date === today ? "today" : "default"}
-                    numeral={format(day, "dd")}
-                    caption={format(day, "MMM", { locale: ptBR }).replace(".", "")}
-                    heading={format(day, "EEEE, d 'de' MMMM", { locale: ptBR })}
-                    hint={relativeDay(date)}
-                  >
-                    {meetings.map(({ occurrence, obligation }) => (
-                      <MeetingRow
+            <div className="space-y-3">
+              <Card className="overflow-hidden">
+                <div className="flex flex-wrap items-center justify-between gap-3 border-b px-4 py-3">
+                  <p className="text-sm text-muted-foreground">
+                    {new Set(pendingItems.map((item) => item.obligation.id)).size} obrigação(ões) ·{" "}
+                    {pendingItems.length} vencimento(s)
+                  </p>
+                  <div className="flex shrink-0 items-center gap-2">
+                    <label className="hidden cursor-pointer items-center gap-2 text-xs text-muted-foreground sm:flex">
+                      <Checkbox
+                        checked={
+                          pendingOccurrenceIds.length > 0 &&
+                          selectedPendingIds.length === pendingOccurrenceIds.length
+                            ? true
+                            : selectedPendingIds.length > 0
+                              ? "indeterminate"
+                              : false
+                        }
+                        onCheckedChange={(checked) =>
+                          selectOccurrences(pendingOccurrenceIds, checked === true)
+                        }
+                      />
+                      Todas
+                    </label>
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      disabled={selectedPendingIds.length === 0}
+                      onClick={() => {
+                        setBulkEditOccurrenceIds(selectedPendingIds);
+                        setBulkEditOpen(true);
+                      }}
+                    >
+                      <Pencil className="mr-1.5 h-3.5 w-3.5" />
+                      Editar selecionadas
+                      {selectedPendingIds.length > 0 ? ` (${selectedPendingIds.length})` : ""}
+                    </Button>
+                    <DropdownMenu>
+                      <DropdownMenuTrigger asChild>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          disabled={selectedPendingIds.length === 0}
+                          className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                        >
+                          <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                          Excluir
+                        </Button>
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end">
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={() =>
+                            setDeleteTarget({
+                              scope: "occurrences",
+                              occurrences: selectedPendingItems.map((item) => item.occurrence),
+                            })
+                          }
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Excluir somente os vencimentos selecionados
+                        </DropdownMenuItem>
+                        <DropdownMenuItem
+                          className="text-destructive"
+                          onClick={() =>
+                            setDeleteTarget({
+                              scope: "series-batch",
+                              obligations: selectedPendingObligations,
+                            })
+                          }
+                        >
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          Excluir obrigação
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
+                  </div>
+                </div>
+                <div className="space-y-2 bg-muted/15 p-3">
+                  {pendingItems.map(({ occurrence, obligation }) => {
+                    const task = occurrence.task_id
+                      ? (taskById.get(occurrence.task_id) ?? null)
+                      : null;
+                    return (
+                      <OccurrenceRow
                         key={occurrence.id}
                         occurrence={occurrence}
                         obligation={obligation}
-                        department={departmentById.get(obligation.department_id ?? "") ?? null}
-                        color={departmentColor(
-                          departmentById.get(obligation.department_id ?? "") ?? null,
-                          departmentOrder,
-                        )}
-                        showTitle={
-                          (routinesPerDepartment.get(obligation.department_id ?? "none") ?? 0) > 1
+                        task={task}
+                        assignee={
+                          profileById.get(task?.assignee_id ?? obligation.assignee_id ?? "") ?? null
                         }
-                        assignee={profileById.get(obligation.assignee_id ?? "") ?? null}
-                        items={itemsByOccurrence.get(occurrence.id) ?? []}
-                        templateCount={templateCountByObligation.get(obligation.id) ?? 0}
-                        tasksByItem={tasksByItem}
-                        onOpen={() => setMeetingId(occurrence.id)}
+                        selected={selectedOccurrenceIds.includes(occurrence.id)}
+                        working={workingOccurrenceId === occurrence.id}
+                        onSelectedChange={() => toggleOccurrenceSelection(occurrence.id)}
+                        onOpenTask={() => openTask(occurrence)}
+                        onCreateTask={() => void createTaskNow(occurrence)}
+                        onComplete={() => void completeOccurrence(occurrence)}
                       />
-                    ))}
-                  </MeetingDateGroup>
-                );
-              })}
-              {upcomingDates.length > datesShown && (
-                <div className="flex justify-center">
-                  <Button
-                    variant="ghost"
-                    className="text-primary"
-                    onClick={() => setDatesShown((current) => current + DATES_PER_PAGE)}
-                  >
-                    <ChevronDown className="mr-1.5 h-4 w-4" /> Mostrar mais semanas
-                  </Button>
+                    );
+                  })}
                 </div>
-              )}
+              </Card>
             </div>
           )}
+        </TabsContent>
+
+        <TabsContent value="calendar" className="mt-4">
+          <ObligationsCalendar
+            cursor={calendarCursor}
+            onCursorChange={setCalendarCursor}
+            occurrences={activeOccurrences}
+            obligationById={obligationById}
+            onOccurrenceClick={(occurrence) => {
+              if (occurrence.task_id && taskById.has(occurrence.task_id)) openTask(occurrence);
+              else void createTaskNow(occurrence);
+            }}
+          />
         </TabsContent>
 
         <TabsContent value="settings" className="mt-4">
           {obligations.length === 0 ? (
             <EmptyState
-              title="Nenhuma reunião recorrente configurada"
-              description="Cadastre a primeira reunião de um departamento."
+              title="Nenhuma obrigação configurada"
+              description="Cadastre a primeira regra recorrente deste ambiente."
             />
           ) : (
-            <div className="grid gap-3 lg:grid-cols-2">
-              {visibleObligations.map((obligation) => {
-                const department = departmentById.get(obligation.department_id ?? "");
-                const assignee = profileById.get(obligation.assignee_id ?? "");
-                const next = pendingOccurrencesOf(obligation.id).find(
-                  (occurrence) => occurrence.due_date >= today,
-                );
-                const people = (participantsByObligation.get(obligation.id) ?? [])
-                  .map((id) => profileById.get(id)?.full_name || profileById.get(id)?.email)
-                  .filter(Boolean);
-                return (
-                  <Card key={obligation.id} className="p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div className="min-w-0">
-                        <div className="flex items-center gap-2">
-                          <span
-                            className="h-3 w-3 shrink-0 rounded-sm"
-                            style={{
-                              backgroundColor: departmentColor(department ?? null, departmentOrder),
-                            }}
-                          />
-                          <h3 className="truncate font-semibold">{obligation.title}</h3>
-                          {!obligation.is_active && <Badge variant="outline">Pausada</Badge>}
+            <div className="space-y-3">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border bg-card p-3">
+                <p className="text-sm text-muted-foreground">
+                  {obligations.length} obrigação(ões) configurada(s) neste ambiente
+                </p>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  onClick={() => setDeleteTarget({ scope: "all" })}
+                >
+                  <Trash2 className="mr-1.5 h-4 w-4" />
+                  Excluir todas
+                </Button>
+              </div>
+              <div className="grid gap-3 lg:grid-cols-2">
+                {obligations.map((obligation) => {
+                  const assignee = profileById.get(obligation.assignee_id ?? "");
+                  const nextOccurrence = occurrences.find(
+                    (occurrence) =>
+                      occurrence.obligation_id === obligation.id &&
+                      occurrence.status !== "completed" &&
+                      occurrence.status !== "skipped" &&
+                      occurrence.due_date >= today,
+                  );
+                  return (
+                    <Card key={obligation.id} className="p-4">
+                      <div className="flex items-start justify-between gap-3">
+                        <div className="min-w-0">
+                          <div className="flex items-center gap-2">
+                            <span className="h-3 w-3 shrink-0 rounded-sm bg-primary" />
+                            <h3 className="truncate font-semibold">{obligation.title}</h3>
+                            {!obligation.is_active && <Badge variant="outline">Pausada</Badge>}
+                          </div>
+                          <p className="mt-1 text-xs text-muted-foreground">
+                            {formatRecurrence(obligation)}
+                          </p>
                         </div>
-                        <p className="mt-1 text-xs text-muted-foreground">
-                          {department?.name ?? "Sem departamento"} · {formatRecurrence(obligation)}
-                        </p>
+                        <div className="flex shrink-0 gap-1">
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title="Editar"
+                            onClick={() => {
+                              setEditingObligation(obligation);
+                              setDialogOpen(true);
+                            }}
+                          >
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
+                            title="Excluir obrigação"
+                            onClick={() => setDeleteTarget({ scope: "series", obligation })}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            className="h-8 w-8"
+                            title={obligation.is_active ? "Pausar" : "Ativar"}
+                            onClick={() =>
+                              void setObligationActive(obligation, !obligation.is_active)
+                            }
+                          >
+                            {obligation.is_active ? (
+                              <Pause className="h-4 w-4" />
+                            ) : (
+                              <Play className="h-4 w-4" />
+                            )}
+                          </Button>
+                        </div>
                       </div>
-                      <div className="flex shrink-0 gap-1">
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          title="Editar"
-                          aria-label="Editar reunião"
-                          onClick={() => {
-                            setEditingObligation(obligation);
-                            setDialogOpen(true);
-                          }}
-                        >
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8"
-                          title={obligation.is_active ? "Pausar" : "Ativar"}
-                          aria-label={obligation.is_active ? "Pausar reunião" : "Ativar reunião"}
-                          onClick={() =>
-                            void setObligationActive(obligation, !obligation.is_active)
-                          }
-                        >
-                          {obligation.is_active ? (
-                            <Pause className="h-4 w-4" />
-                          ) : (
-                            <Play className="h-4 w-4" />
-                          )}
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive hover:bg-destructive/10 hover:text-destructive"
-                          title="Excluir"
-                          aria-label="Excluir reunião"
-                          onClick={() => setDeleteTarget(obligation)}
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
+                      <div className="mt-4 grid grid-cols-2 gap-3 border-t pt-3 text-xs">
+                        <div>
+                          <span className="block text-muted-foreground">Responsável</span>
+                          <span className="mt-1 block font-medium">
+                            {assignee?.full_name || assignee?.email || "Sem responsável"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-muted-foreground">Próximo vencimento</span>
+                          <span className="mt-1 block font-medium">
+                            {nextOccurrence
+                              ? formatDate(nextOccurrence.due_date)
+                              : "Sem data futura"}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-muted-foreground">Criação da tarefa</span>
+                          <span className="mt-1 block font-medium">
+                            {obligation.create_before_days === 0
+                              ? "No vencimento"
+                              : `${obligation.create_before_days} dia(s) antes`}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="block text-muted-foreground">Período</span>
+                          <span className="mt-1 block font-medium">
+                            Desde {formatDate(obligation.start_date)}
+                            {obligation.end_date
+                              ? ` até ${formatDate(obligation.end_date)}`
+                              : " · sem término"}
+                          </span>
+                        </div>
                       </div>
-                    </div>
-                    <dl className="mt-4 grid grid-cols-2 gap-3 border-t pt-3 text-xs">
-                      <div>
-                        <dt className="text-muted-foreground">Responsável</dt>
-                        <dd className="mt-1 font-medium">
-                          {assignee?.full_name || assignee?.email || "Sem responsável"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Próxima reunião</dt>
-                        <dd className="mt-1 font-medium">
-                          {next ? formatDate(next.due_date) : "Sem data futura"}
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Pauta padrão</dt>
-                        <dd className="mt-1 font-medium">
-                          {templateCountByObligation.get(obligation.id) ?? 0} itens
-                        </dd>
-                      </div>
-                      <div>
-                        <dt className="text-muted-foreground">Aviso</dt>
-                        <dd className="mt-1 font-medium">
-                          {obligation.reminder_days_before} dia(s) antes
-                        </dd>
-                      </div>
-                      <div className="col-span-2">
-                        <dt className="text-muted-foreground">Tarefas da pauta</dt>
-                        <dd className="mt-1 font-medium">
-                          {!obligation.auto_create_tasks
-                            ? "Só quando gerar tarefa na reunião"
-                            : obligation.create_before_days === 0
-                              ? "Criadas automaticamente no dia"
-                              : `Criadas automaticamente ${obligation.create_before_days} dia(s) antes`}
-                        </dd>
-                      </div>
-                      <div className="col-span-2">
-                        <dt className="text-muted-foreground">Participantes</dt>
-                        <dd className="mt-1 font-medium">
-                          {people.length > 0
-                            ? people.join(", ")
-                            : "Nenhum (aviso só ao responsável)"}
-                        </dd>
-                      </div>
-                    </dl>
-                  </Card>
-                );
-              })}
+                    </Card>
+                  );
+                })}
+              </div>
             </div>
           )}
         </TabsContent>
       </Tabs>
 
-      <ObligationDialog
+      <ClassicObligationDialog
         open={dialogOpen}
         onOpenChange={setDialogOpen}
         obligation={editingObligation}
       />
-      <DepartmentsDialog
-        open={departmentsOpen}
-        onOpenChange={setDepartmentsOpen}
-        departments={departments}
-        members={departmentMembers}
-        profiles={profiles}
-        obligations={obligations}
+      <TaskDialog open={taskDialogOpen} onOpenChange={setTaskDialogOpen} task={editingTask} />
+      <BulkTaskEditDialog
+        open={bulkEditOpen}
+        onOpenChange={setBulkEditOpen}
+        taskCount={bulkEditOccurrenceIds.length}
+        profiles={assignableProfiles}
+        columns={columns}
+        statuses={taskStatuses}
+        onSave={saveBulkTaskChanges}
       />
-      {meeting && meetingObligation ? (
-        <MeetingDialog
-          open
-          onOpenChange={(open) => {
-            if (!open) setMeetingId(null);
-          }}
-          occurrence={meeting}
-          obligation={meetingObligation}
-          department={departmentById.get(meetingObligation.department_id ?? "") ?? null}
-          items={itemsByOccurrence.get(meeting.id) ?? []}
-          tasksByItem={tasksByItem}
-          participantIds={participantsByObligation.get(meetingObligation.id) ?? []}
-          profileById={profileById}
-          isTaskDone={isTaskDone}
-        />
-      ) : null}
       <AlertDialog
         open={!!deleteTarget}
         onOpenChange={(open) => {
@@ -712,12 +1011,8 @@ function ObligationsPage() {
       >
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>Excluir esta reunião recorrente?</AlertDialogTitle>
-            <AlertDialogDescription>
-              {deleteTarget
-                ? `“${deleteTarget.title}”, as reuniões agendadas e as pautas delas serão excluídas. As tarefas já geradas continuam existindo.`
-                : ""}
-            </AlertDialogDescription>
+            <AlertDialogTitle>{deleteDialogTitle(deleteTarget)}</AlertDialogTitle>
+            <AlertDialogDescription>{deleteDialogDescription(deleteTarget)}</AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
@@ -739,976 +1034,547 @@ function ObligationsPage() {
   );
 }
 
-/** Uma data de reunião: a data em destaque à esquerda e as reuniões do dia à direita. */
-function MeetingDateGroup({
+function MetricCard({
+  label,
+  value,
+  icon: Icon,
   tone,
-  numeral,
-  caption,
-  heading,
-  hint,
-  children,
 }: {
-  tone: "default" | "today" | "overdue";
-  numeral: string;
-  caption: string;
-  heading: string;
-  hint: string;
-  children: ReactNode;
+  label: string;
+  value: number;
+  icon: typeof AlertTriangle;
+  tone: "destructive" | "warning" | "primary" | "success";
 }) {
-  const numeralColor =
-    tone === "overdue" ? "text-[#EC643F]" : tone === "today" ? "text-primary" : "text-foreground";
+  const colors = {
+    destructive: "bg-destructive/10 text-destructive",
+    warning: "bg-amber-500/10 text-amber-600 dark:text-amber-400",
+    primary: "bg-primary/10 text-primary",
+    success: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
+  };
   return (
-    <section className="grid gap-3 sm:grid-cols-[4.5rem_1fr] sm:gap-5">
-      <div className="flex items-baseline gap-2 sm:block sm:pt-1 sm:text-right">
-        <span
-          className={`block text-4xl font-semibold leading-none tracking-tight tabular-nums ${numeralColor}`}
-        >
-          {numeral}
-        </span>
-        <span className="block text-sm text-muted-foreground sm:mt-1">{caption}</span>
-      </div>
-      <div className="min-w-0">
-        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-          <h2
-            className={`text-base font-semibold first-letter:uppercase ${tone === "overdue" ? "text-[#C24E2C]" : ""}`}
-          >
-            {heading}
-          </h2>
-          <span className="text-sm text-muted-foreground">{hint}</span>
-        </div>
-        <ul className="divide-y overflow-hidden rounded-2xl border bg-card">{children}</ul>
-      </div>
-    </section>
+    <Card className="flex items-center gap-3 p-4">
+      <span className={`grid h-10 w-10 place-items-center rounded-xl ${colors[tone]}`}>
+        <Icon className="h-5 w-5" />
+      </span>
+      <span>
+        <span className="block text-2xl font-semibold leading-none">{value}</span>
+        <span className="mt-1 block text-xs text-muted-foreground">{label}</span>
+      </span>
+    </Card>
   );
 }
 
-function MeetingRow({
-  occurrence,
-  obligation,
-  department,
-  color,
-  showTitle,
-  assignee,
-  items,
-  templateCount,
-  tasksByItem,
-  dateLabel,
-  onOpen,
-}: {
-  occurrence: ObligationOccurrence;
-  obligation: Obligation;
-  department: ObligationDepartment | null;
-  color: string;
-  showTitle: boolean;
-  assignee: Profile | null;
-  items: ObligationAgendaItem[];
-  templateCount: number;
-  tasksByItem: Map<string, Task[]>;
-  /** Mostra a data na linha (usado na lista de atrasadas, que mistura datas). */
-  dateLabel?: string;
-  onOpen: () => void;
-}) {
-  const prepared = Boolean(occurrence.agenda_prepared_at);
-  const resolved = items.filter((item) => item.result).length;
-  const taskCount = items.reduce(
-    (count, item) => count + (tasksByItem.get(item.id)?.length ?? 0),
-    0,
-  );
-  const ready = prepared && items.length > 0 && resolved === items.length;
-  const progress = prepared && items.length > 0 ? Math.round((resolved / items.length) * 100) : 0;
-
-  return (
-    <li>
-      <button
-        type="button"
-        onClick={onOpen}
-        className="grid w-full grid-cols-[4px_1fr_auto] items-center gap-x-4 gap-y-1 px-4 py-3 text-left transition-colors hover:bg-muted/40 focus-visible:bg-muted/40 focus-visible:outline-none sm:grid-cols-[4px_minmax(0,1.3fr)_minmax(0,1fr)_auto]"
-      >
-        <span className="h-9 w-1 rounded-full" style={{ backgroundColor: color }} aria-hidden />
-        <span className="min-w-0">
-          <span className="block truncate font-medium">
-            {department?.name ?? obligation.title}
-            {dateLabel ? (
-              <span className="ml-2 text-sm font-normal text-[#C24E2C]">{dateLabel}</span>
-            ) : null}
-          </span>
-          <span className="block truncate text-sm text-muted-foreground">
-            {showTitle
-              ? obligation.title
-              : assignee?.full_name || assignee?.email || "Sem responsável"}
-            {occurrence.due_time ? `, ${occurrence.due_time.slice(0, 5)}` : ""}
-          </span>
-        </span>
-        <span className="col-start-2 min-w-0 sm:col-start-auto">
-          {prepared ? (
-            <span className="block">
-              <span className={`text-sm ${ready ? "font-medium text-primary" : ""}`}>
-                {ready
-                  ? "Pronta para encerrar"
-                  : `${resolved} de ${items.length} itens com resultado`}
-              </span>
-              <span className="mt-1 block h-1 w-full max-w-40 overflow-hidden rounded-full bg-muted">
-                <span
-                  className="block h-full rounded-full bg-primary transition-[width]"
-                  style={{ width: `${progress}%` }}
-                />
-              </span>
-            </span>
-          ) : (
-            <span className="text-sm text-muted-foreground">
-              {templateCount} {templateCount === 1 ? "item previsto" : "itens previstos"}
-            </span>
-          )}
-          {taskCount > 0 && (
-            <span className="mt-0.5 block text-xs text-muted-foreground">
-              {taskCount} {taskCount === 1 ? "tarefa gerada" : "tarefas geradas"}
-            </span>
-          )}
-        </span>
-        <ChevronRight
-          className="row-span-2 h-4 w-4 text-muted-foreground sm:row-span-1"
-          aria-hidden
-        />
-      </button>
-    </li>
-  );
-}
-
-/** A reunião: pauta própria, resultado de cada item e tarefas geradas por item. */
-function MeetingDialog({
+function BulkTaskEditDialog({
   open,
   onOpenChange,
-  occurrence,
-  obligation,
-  department,
-  items,
-  tasksByItem,
-  participantIds,
-  profileById,
-  isTaskDone,
+  taskCount,
+  profiles,
+  columns,
+  statuses,
+  onSave,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  occurrence: ObligationOccurrence;
-  obligation: Obligation;
-  department: ObligationDepartment | null;
-  items: ObligationAgendaItem[];
-  tasksByItem: Map<string, Task[]>;
-  participantIds: string[];
-  profileById: Map<string, Profile>;
-  isTaskDone: (task: Task) => boolean;
+  taskCount: number;
+  profiles: Profile[];
+  columns: KanbanColumn[];
+  statuses: TaskStatus[];
+  onSave: (changes: BulkTaskChanges) => Promise<boolean>;
 }) {
-  const queryClient = useQueryClient();
-  const prepared = Boolean(occurrence.agenda_prepared_at);
-  const { data: preview = [], isLoading: loadingPreview } = useObligationAgendaPreview(
-    prepared ? null : occurrence.id,
-  );
-  const [busy, setBusy] = useState(false);
-  const [newItem, setNewItem] = useState("");
-  const [taskFor, setTaskFor] = useState<ObligationAgendaItem | null>(null);
-  const [rescheduling, setRescheduling] = useState(false);
-  const [newDate, setNewDate] = useState(occurrence.due_date);
-  const closed = isClosed(occurrence);
+  const [applyTitle, setApplyTitle] = useState(false);
+  const [title, setTitle] = useState("");
+  const [applyDescription, setApplyDescription] = useState(false);
+  const [description, setDescription] = useState("");
+  const [assignee, setAssignee] = useState("unchanged");
+  const [priority, setPriority] = useState("unchanged");
+  const [status, setStatus] = useState("unchanged");
+  const [applyCollaborators, setApplyCollaborators] = useState(false);
+  const [collaboratorIds, setCollaboratorIds] = useState<string[]>([]);
+  const [applyDeadline, setApplyDeadline] = useState(false);
+  const [dueDate, setDueDate] = useState("");
+  const [dueTime, setDueTime] = useState("");
+  const [dueDateReason, setDueDateReason] = useState("");
+  const [saving, setSaving] = useState(false);
 
-  const rows: AgendaRow[] = prepared
-    ? items.map((item) => ({ item, templateId: item.template_id, title: item.title }))
-    : preview.map((entry) => ({ item: null, templateId: entry.template_id, title: entry.title }));
-  const resolvedCount = rows.filter((row) => row.item?.result).length;
-  const allResolved = rows.length > 0 && resolvedCount === rows.length;
-  const people = participantIds
-    .map((id) => profileById.get(id)?.full_name || profileById.get(id)?.email)
-    .filter(Boolean);
-  const reminderDate = format(
-    addDays(new Date(`${occurrence.due_date}T12:00:00`), -obligation.reminder_days_before),
-    "dd/MM",
-  );
+  useEffect(() => {
+    if (!open) return;
+    setApplyTitle(false);
+    setTitle("");
+    setApplyDescription(false);
+    setDescription("");
+    setAssignee("unchanged");
+    setPriority("unchanged");
+    setStatus("unchanged");
+    setApplyCollaborators(false);
+    setCollaboratorIds([]);
+    setApplyDeadline(false);
+    setDueDate("");
+    setDueTime("");
+    setDueDateReason("");
+  }, [open]);
 
-  const refresh = () =>
-    Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligation-agenda-preview"] }),
-      // Concluir ou desmarcar um item conclui ou reabre a tarefa automática dele.
-      queryClient.invalidateQueries({ queryKey: ["tasks"] }),
-    ]);
-
-  /**
-   * Antes de editar, a pauta prevista é copiada para a reunião. A partir daí ela
-   * deixa de acompanhar a pauta padrão.
-   */
-  const ensurePrepared = async () => {
-    if (prepared) return items;
-    const { error } = await (supabase as any).rpc("prepare_obligation_agenda", {
-      target_occurrence_id: occurrence.id,
-    });
-    if (error) throw error;
-    const { data, error: loadError } = await (
-      supabase.from("obligation_agenda_items" as any) as any
-    )
-      .select("*")
-      .eq("occurrence_id", occurrence.id)
-      .order("position");
-    if (loadError) throw loadError;
-    await refresh();
-    return (data ?? []) as ObligationAgendaItem[];
+  const toggleCollaborator = (profileId: string) => {
+    setCollaboratorIds((current) =>
+      current.includes(profileId)
+        ? current.filter((id) => id !== profileId)
+        : [...current, profileId],
+    );
   };
 
-  const run = async (action: () => Promise<void>) => {
-    if (isOffline()) return toast.error("Conecte-se à internet para alterar a reunião.");
-    setBusy(true);
+  const save = async () => {
+    const updates: BulkTaskUpdates = {};
+    if (applyTitle) {
+      if (!title.trim()) {
+        toast.error("Informe o novo título das tarefas.");
+        return;
+      }
+      updates.title = title.trim();
+    }
+    if (applyDescription) updates.description = description.trim() || null;
+    if (assignee !== "unchanged") {
+      updates.assignee_id = assignee === "none" ? null : assignee;
+    }
+    if (priority !== "unchanged") {
+      updates.priority = priority === "none" ? null : (priority as NonNullable<Task["priority"]>);
+    }
+    if (status !== "unchanged") {
+      if (status === "completed") {
+        updates.status = "done";
+        updates.status_id = statuses.find((item) => item.is_completed)?.id ?? null;
+        updates.completed_at = new Date().toISOString();
+      } else {
+        updates.status = "todo";
+        updates.status_id = statuses.find((item) => !item.is_completed)?.id ?? null;
+        updates.completed_at = null;
+        updates.column_id = status === "none" ? null : status.replace(/^column:/, "");
+      }
+    }
+    if (applyDeadline) {
+      if (!dueDateReason.trim()) {
+        toast.error("Informe a justificativa para alterar os prazos.");
+        return;
+      }
+      updates.due_date = dueDate ? new Date(`${dueDate}T12:00:00`).toISOString() : null;
+      updates.due_time = dueDate ? dueTime || null : null;
+    }
+    if (Object.keys(updates).length === 0 && !applyCollaborators) {
+      toast.error("Escolha ao menos um campo para alterar.");
+      return;
+    }
+
+    setSaving(true);
     try {
-      await action();
-    } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : String((error as any)?.message ?? error),
-      );
+      if (
+        await onSave({
+          updates,
+          collaboratorIds: applyCollaborators ? collaboratorIds : undefined,
+          dueDateReason: applyDeadline ? dueDateReason.trim() : undefined,
+        })
+      ) {
+        onOpenChange(false);
+      }
     } finally {
-      setBusy(false);
+      setSaving(false);
     }
   };
 
-  const resolveRow = (row: AgendaRow) => async () => {
-    const current = await ensurePrepared();
-    const item =
-      current.find((candidate) => candidate.id === row.item?.id) ??
-      current.find((candidate) => row.templateId && candidate.template_id === row.templateId);
-    if (!item) throw new Error("Item da pauta não encontrado.");
-    return item;
-  };
-
-  const setResult = (row: AgendaRow, result: AgendaItemResult | null) =>
-    run(async () => {
-      const item = await resolveRow(row)();
-      const { error } = await (supabase.from("obligation_agenda_items" as any) as any)
-        .update({ result })
-        .eq("id", item.id);
-      if (error) throw error;
-      await refresh();
-    });
-
-  const generateTask = (row: AgendaRow) =>
-    run(async () => {
-      const item = await resolveRow(row)();
-      setTaskFor(item);
-    });
-
-  const removeRow = (row: AgendaRow) =>
-    run(async () => {
-      const item = await resolveRow(row)();
-      const { error } = await (supabase.from("obligation_agenda_items" as any) as any)
-        .delete()
-        .eq("id", item.id);
-      if (error) throw error;
-      await refresh();
-    });
-
-  const addItem = () =>
-    run(async () => {
-      const title = newItem.trim();
-      if (!title) return;
-      const current = await ensurePrepared();
-      const position = current.reduce((max, item) => Math.max(max, item.position), -1) + 1;
-      const { error } = await (supabase.from("obligation_agenda_items" as any) as any).insert({
-        occurrence_id: occurrence.id,
-        title,
-        position,
-      });
-      if (error) throw error;
-      setNewItem("");
-      await refresh();
-    });
-
-  const reschedule = () =>
-    run(async () => {
-      if (!newDate || newDate === occurrence.due_date) return setRescheduling(false);
-      const { error } = await (supabase.from("obligation_occurrences" as any) as any)
-        .update({ due_date: newDate })
-        .eq("id", occurrence.id);
-      if (error) {
-        throw new Error(
-          /duplicate|unique/i.test(error.message)
-            ? "Já existe uma reunião desta rotina nessa data."
-            : error.message,
-        );
-      }
-      setRescheduling(false);
-      await refresh();
-      toast.success(`Reunião remarcada para ${formatDate(newDate)}.`);
-    });
-
-  const complete = () =>
-    run(async () => {
-      const { error } = await (supabase as any).rpc("complete_obligation_occurrence", {
-        target_occurrence_id: occurrence.id,
-      });
-      if (error) throw error;
-      await refresh();
-      toast.success("Reunião encerrada");
-      onOpenChange(false);
-    });
-
-  const reopen = () =>
-    run(async () => {
-      const { error } = await (supabase.from("obligation_occurrences" as any) as any)
-        .update({ status: "open", completed_at: null, completed_by: null })
-        .eq("id", occurrence.id);
-      if (error) throw error;
-      await refresh();
-    });
-
   return (
-    <>
-      <Dialog open={open && !taskFor} onOpenChange={onOpenChange}>
-        <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
-          <DialogHeader>
-            <DialogTitle className="flex flex-wrap items-center gap-2">
-              {obligation.title}
-              {closed && <Badge variant="secondary">Encerrada</Badge>}
-            </DialogTitle>
-            <DialogDescription className="flex flex-wrap items-center gap-x-2 gap-y-1">
-              <span>
-                {department?.name ?? "Sem departamento"} ·{" "}
-                {format(new Date(`${occurrence.due_date}T12:00:00`), "EEEE, dd/MM/yyyy", {
-                  locale: ptBR,
-                })}
-                {occurrence.due_time ? ` às ${occurrence.due_time.slice(0, 5)}` : ""}
-              </span>
-              {!closed &&
-                (rescheduling ? (
-                  <span className="flex items-center gap-1">
-                    <Input
-                      type="date"
-                      value={newDate}
-                      onChange={(event) => setNewDate(event.target.value)}
-                      className="h-7 w-36 text-xs"
-                      aria-label="Nova data da reunião"
-                    />
-                    <Button
-                      size="sm"
-                      className="h-7"
-                      disabled={busy}
-                      onClick={() => void reschedule()}
-                    >
-                      Salvar
-                    </Button>
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className="h-7"
-                      onClick={() => setRescheduling(false)}
-                    >
-                      Cancelar
-                    </Button>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    className="text-xs font-medium text-primary hover:underline"
-                    onClick={() => {
-                      setNewDate(occurrence.due_date);
-                      setRescheduling(true);
-                    }}
-                  >
-                    Remarcar
-                  </button>
-                ))}
-            </DialogDescription>
-          </DialogHeader>
-
-          <p className="text-xs text-muted-foreground">
-            <Users className="mr-1 inline h-3.5 w-3.5 align-text-bottom" />
-            {people.length > 0 ? people.join(", ") : "Sem participantes definidos"}
-          </p>
-
-          {!prepared && !closed && (
-            <div className="rounded-lg border border-dashed bg-muted/30 px-3 py-2 text-xs text-muted-foreground">
-              Pauta prevista a partir da pauta padrão. Ela é confirmada em {reminderDate}, quando os
-              participantes são avisados. Ao incluir ou alterar um item agora, a pauta desta reunião
-              passa a ser própria.
-            </div>
-          )}
-
-          <section className="overflow-hidden rounded-xl border">
-            <div className="flex items-center justify-between gap-2 border-b bg-muted/30 px-3 py-2">
-              <h3 className="text-sm font-semibold">Pauta</h3>
-              {rows.length > 0 && (
-                <span className="text-xs text-muted-foreground">
-                  {resolvedCount} de {rows.length} com resultado
-                </span>
-              )}
-            </div>
-            {loadingPreview ? (
-              <div className="flex items-center justify-center gap-2 py-8 text-sm text-muted-foreground">
-                <Loader2 className="h-4 w-4 animate-spin" /> Carregando pauta...
-              </div>
-            ) : rows.length === 0 ? (
-              <p className="flex items-center justify-center gap-2 px-3 py-8 text-sm text-muted-foreground">
-                <ClipboardList className="h-4 w-4" /> Nenhum item na pauta desta reunião.
-              </p>
-            ) : (
-              <ul className="divide-y">
-                {rows.map((row, index) => (
-                  <AgendaItemRow
-                    key={row.item?.id ?? row.templateId ?? index}
-                    number={index + 1}
-                    row={row}
-                    tasks={row.item ? (tasksByItem.get(row.item.id) ?? []) : []}
-                    profileById={profileById}
-                    isTaskDone={isTaskDone}
-                    disabled={busy || closed}
-                    onDone={() => void setResult(row, row.item?.result === "done" ? null : "done")}
-                    onGenerateTask={() => void generateTask(row)}
-                    onRemove={() => void removeRow(row)}
-                  />
-                ))}
-              </ul>
-            )}
-            {!closed && (
-              <div className="flex gap-2 border-t bg-muted/20 px-3 py-2">
-                <Input
-                  value={newItem}
-                  onChange={(event) => setNewItem(event.target.value)}
-                  onKeyDown={(event) => {
-                    if (event.key !== "Enter") return;
-                    event.preventDefault();
-                    void addItem();
-                  }}
-                  placeholder="Incluir assunto nesta reunião..."
-                  className="h-8 bg-background text-sm"
-                  aria-label="Novo item da pauta"
+    <Dialog open={open} onOpenChange={(nextOpen) => !saving && onOpenChange(nextOpen)}>
+      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-3xl">
+        <DialogHeader>
+          <DialogTitle>Editar tarefas selecionadas</DialogTitle>
+          <DialogDescription>
+            As alterações serão aplicadas a {taskCount} tarefa{taskCount === 1 ? "" : "s"}. Os
+            vencimentos ainda previstos serão transformados em tarefas. Ative somente os campos que
+            deseja substituir em todas elas.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="space-y-5 py-2">
+          <section className="grid gap-4 rounded-xl border p-4 sm:grid-cols-2">
+            <div className="space-y-2 sm:col-span-2">
+              <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+                <Checkbox
+                  checked={applyTitle}
+                  onCheckedChange={(checked) => setApplyTitle(checked === true)}
+                  disabled={saving}
                 />
-                <Button
-                  size="sm"
-                  variant="outline"
-                  className="h-8 bg-background"
-                  disabled={busy || !newItem.trim()}
-                  onClick={() => void addItem()}
-                >
-                  <Plus className="mr-1 h-3.5 w-3.5" /> Incluir
-                </Button>
+                Alterar título
+              </label>
+              <Input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                disabled={!applyTitle || saving}
+                placeholder="Novo título para todas as tarefas"
+              />
+            </div>
+            <div className="space-y-2">
+              <Label>Responsável</Label>
+              <Select value={assignee} onValueChange={setAssignee} disabled={saving}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unchanged">Não alterar</SelectItem>
+                  <SelectItem value="none">Sem responsável</SelectItem>
+                  {profiles.map((profile) => (
+                    <SelectItem key={profile.id} value={profile.id}>
+                      {profile.full_name || profile.email || "Usuário"}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Prioridade</Label>
+              <Select value={priority} onValueChange={setPriority} disabled={saving}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unchanged">Não alterar</SelectItem>
+                  <SelectItem value="none">Sem prioridade</SelectItem>
+                  <SelectItem value="low">Baixa</SelectItem>
+                  <SelectItem value="medium">Média</SelectItem>
+                  <SelectItem value="high">Alta</SelectItem>
+                  <SelectItem value="urgent">Urgente</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+            <div className="space-y-2">
+              <Label>Status</Label>
+              <Select value={status} onValueChange={setStatus} disabled={saving}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="unchanged">Não alterar</SelectItem>
+                  <SelectItem value="none">Sem coluna</SelectItem>
+                  {columns.map((column) => (
+                    <SelectItem key={column.id} value={`column:${column.id}`}>
+                      {column.name}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value="completed">Concluído</SelectItem>
+                </SelectContent>
+              </Select>
+            </div>
+          </section>
+
+          <section className="space-y-3 rounded-xl border p-4">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <Checkbox
+                checked={applyCollaborators}
+                onCheckedChange={(checked) => setApplyCollaborators(checked === true)}
+                disabled={saving}
+              />
+              Substituir participantes
+            </label>
+            <p className="text-xs text-muted-foreground">
+              Ao ativar, a lista escolhida substituirá os participantes atuais de todas as tarefas.
+            </p>
+            {applyCollaborators && (
+              <div className="grid max-h-40 gap-1 overflow-y-auto rounded-md border p-2 sm:grid-cols-2">
+                {profiles.map((profile) => (
+                  <label
+                    key={profile.id}
+                    className="flex cursor-pointer items-center gap-2 rounded px-2 py-1.5 text-sm hover:bg-muted"
+                  >
+                    <Checkbox
+                      checked={collaboratorIds.includes(profile.id)}
+                      onCheckedChange={() => toggleCollaborator(profile.id)}
+                      disabled={saving}
+                    />
+                    <span className="truncate">
+                      {profile.full_name || profile.email || "Usuário"}
+                    </span>
+                  </label>
+                ))}
               </div>
             )}
           </section>
 
-          <DialogFooter className="gap-2">
-            <Button variant="outline" onClick={() => onOpenChange(false)}>
-              Fechar
-            </Button>
-            {closed ? (
-              <Button variant="outline" disabled={busy} onClick={() => void reopen()}>
-                <RotateCcw className="mr-1.5 h-4 w-4" /> Reabrir reunião
-              </Button>
+          <section className="space-y-3 rounded-xl border p-4">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <Checkbox
+                checked={applyDeadline}
+                onCheckedChange={(checked) => setApplyDeadline(checked === true)}
+                disabled={saving}
+              />
+              Alterar prazo e horário
+            </label>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div className="space-y-2">
+                <Label>Prazo</Label>
+                <Input
+                  type="date"
+                  value={dueDate}
+                  onChange={(event) => setDueDate(event.target.value)}
+                  disabled={!applyDeadline || saving}
+                />
+              </div>
+              <div className="space-y-2">
+                <Label>Horário opcional</Label>
+                <Input
+                  type="time"
+                  value={dueTime}
+                  onChange={(event) => setDueTime(event.target.value)}
+                  disabled={!applyDeadline || !dueDate || saving}
+                />
+              </div>
+              {applyDeadline && (
+                <div className="space-y-2 sm:col-span-2">
+                  <Label>
+                    Justificativa da alteração <span className="text-destructive">*</span>
+                  </Label>
+                  <Input
+                    value={dueDateReason}
+                    onChange={(event) => setDueDateReason(event.target.value)}
+                    placeholder="Explique o motivo da alteração do prazo"
+                    disabled={saving}
+                  />
+                </div>
+              )}
+            </div>
+          </section>
+
+          <section className="space-y-3 rounded-xl border p-4">
+            <label className="flex cursor-pointer items-center gap-2 text-sm font-medium">
+              <Checkbox
+                checked={applyDescription}
+                onCheckedChange={(checked) => setApplyDescription(checked === true)}
+                disabled={saving}
+              />
+              Alterar descrição
+            </label>
+            {applyDescription ? (
+              <RichTextEditor
+                value={description}
+                onChange={setDescription}
+                placeholder="Nova descrição para todas as tarefas..."
+                minHeight={100}
+              />
             ) : (
-              <Button
-                disabled={busy || !allResolved}
-                title={allResolved ? undefined : "Defina o resultado de todos os itens"}
-                onClick={() => void complete()}
-              >
-                <CheckCircle2 className="mr-1.5 h-4 w-4" />
-                {allResolved
-                  ? "Encerrar reunião"
-                  : `${rows.length - resolvedCount} item(ns) sem resultado`}
-              </Button>
+              <p className="text-xs text-muted-foreground">
+                As descrições atuais serão preservadas.
+              </p>
             )}
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
-      <TaskDialog
-        open={!!taskFor}
-        onOpenChange={(next) => {
-          if (next) return;
-          setTaskFor(null);
-          void refresh();
-        }}
-        agendaItemId={taskFor?.id ?? null}
-        defaults={{
-          title: taskFor?.title,
-          dueDate: occurrence.due_date >= todayKey() ? occurrence.due_date : todayKey(),
-          priority: obligation.priority,
-          // Participantes e responsável da reunião acompanham a tarefa gerada.
-          collaboratorIds: [
-            ...new Set([...participantIds, obligation.assignee_id].filter(Boolean) as string[]),
-          ],
-        }}
-      />
-    </>
+          </section>
+        </div>
+        <DialogFooter>
+          <Button variant="outline" disabled={saving} onClick={() => onOpenChange(false)}>
+            Cancelar
+          </Button>
+          <Button disabled={saving} onClick={() => void save()}>
+            {saving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {saving ? "Aplicando..." : "Aplicar alterações"}
+          </Button>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   );
 }
 
-function AgendaItemRow({
-  number,
-  row,
-  tasks,
-  profileById,
-  isTaskDone,
-  disabled,
-  onDone,
-  onGenerateTask,
-  onRemove,
+function OccurrenceRow({
+  occurrence,
+  obligation,
+  task,
+  assignee,
+  selected,
+  working,
+  onSelectedChange,
+  onOpenTask,
+  onCreateTask,
+  onComplete,
 }: {
-  number: number;
-  row: AgendaRow;
-  tasks: Task[];
-  profileById: Map<string, Profile>;
-  isTaskDone: (task: Task) => boolean;
-  disabled: boolean;
-  onDone: () => void;
-  onGenerateTask: () => void;
-  onRemove: () => void;
+  occurrence: ObligationOccurrence;
+  obligation: Obligation;
+  task: Task | null;
+  assignee: Profile | null;
+  selected: boolean;
+  working: boolean;
+  onSelectedChange: () => void;
+  onOpenTask: () => void;
+  onCreateTask: () => void;
+  onComplete: () => void;
 }) {
-  const result = row.item?.result ?? null;
-  const resolver = row.item?.resolved_by ? profileById.get(row.item.resolved_by) : null;
+  const today = todayKey();
+  const overdue = occurrence.due_date < today;
+  const dueToday = occurrence.due_date === today;
+  const taskAvailable = Boolean(task);
+  const displayTitle = task?.title ?? obligation.title;
+  const assigneeName = assignee?.full_name || assignee?.email || "Sem responsável";
+  const initials = assignee
+    ? assigneeName
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part[0])
+        .join("")
+        .toUpperCase()
+    : "?";
   return (
-    <li className={`px-3 py-2.5 ${result ? "bg-muted/10" : ""}`}>
-      <div className="flex flex-wrap items-start gap-3">
-        <span className="mt-0.5 w-5 shrink-0 text-right text-xs tabular-nums text-muted-foreground">
-          {number}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className="block text-sm leading-snug">{row.title}</span>
-          {!row.templateId && (
-            <span className="text-[11px] text-muted-foreground">Incluído nesta reunião</span>
-          )}
-          {result === "done" && (
-            <span className="block text-[11px] text-emerald-700 dark:text-emerald-400">
-              Concluído{resolver ? ` por ${resolver.full_name || resolver.email}` : ""}
-            </span>
-          )}
-        </span>
-        <span className="flex shrink-0 flex-wrap items-center gap-1">
-          <Button
-            size="sm"
-            variant={result === "done" ? "default" : "outline"}
-            className="h-7 px-2 text-xs"
-            disabled={disabled || result === "task"}
-            onClick={onDone}
-            title={result === "task" ? "Este item já gerou tarefa" : undefined}
-          >
-            <CheckCircle2 className="mr-1 h-3.5 w-3.5" /> Concluído
-          </Button>
-          <Button
-            size="sm"
-            variant={result === "task" ? "default" : "outline"}
-            className="h-7 px-2 text-xs"
-            disabled={disabled}
-            onClick={onGenerateTask}
-          >
-            <Plus className="mr-1 h-3.5 w-3.5" />
-            {tasks.length > 0 ? "Outra tarefa" : "Gerar tarefa"}
-          </Button>
-          {tasks.length === 0 && (
-            <Button
-              size="icon"
-              variant="ghost"
-              className="h-7 w-7 text-muted-foreground hover:text-destructive"
-              disabled={disabled}
-              onClick={onRemove}
-              title="Remover da pauta desta reunião"
-              aria-label={`Remover o item ${number} desta reunião`}
-            >
-              <Trash2 className="h-3.5 w-3.5" />
-            </Button>
-          )}
+    <Card
+      className={`flex flex-wrap items-center gap-3 p-3 ${selected ? "ring-2 ring-primary/30" : ""} ${overdue ? "border-destructive/40" : dueToday ? "border-amber-500/50" : ""}`}
+    >
+      <Checkbox
+        checked={selected}
+        onCheckedChange={onSelectedChange}
+        aria-label={`Selecionar ${displayTitle} de ${formatDate(occurrence.due_date)}`}
+      />
+      <div className="grid h-12 w-14 shrink-0 place-items-center rounded-xl bg-primary text-center text-primary-foreground">
+        <span>
+          <span className="block text-lg font-bold leading-none">
+            {format(new Date(`${occurrence.due_date}T12:00:00`), "dd")}
+          </span>
+          <span className="text-[9px] font-semibold uppercase">
+            {format(new Date(`${occurrence.due_date}T12:00:00`), "MMM", { locale: ptBR })}
+          </span>
         </span>
       </div>
-      {tasks.length > 0 && (
-        <ul className="ml-8 mt-2 space-y-1">
-          {tasks.map((task) => {
-            const done = isTaskDone(task);
-            const assignee = profileById.get(task.assignee_id ?? "");
-            return (
-              <li
-                key={task.id}
-                className="flex items-center gap-2 rounded-lg bg-background px-2 py-1 text-xs shadow-sm"
-              >
-                {done ? (
-                  <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-emerald-600" />
-                ) : (
-                  <Clock3 className="h-3.5 w-3.5 shrink-0 text-amber-600" />
-                )}
-                <span className={`min-w-0 flex-1 truncate ${done ? "line-through" : ""}`}>
-                  {task.title}
-                </span>
-                {task.obligation_auto_task && (
-                  <span className="shrink-0 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] text-primary">
-                    automática
-                  </span>
-                )}
-                <span className="shrink-0 text-muted-foreground">
-                  {assignee?.full_name || assignee?.email || "Sem responsável"}
-                  {task.due_date ? ` · ${format(new Date(task.due_date), "dd/MM")}` : ""}
-                </span>
-              </li>
-            );
-          })}
-        </ul>
-      )}
-    </li>
+      <Avatar className="h-9 w-9 shrink-0">
+        <AvatarImage src={assignee?.avatar_url || undefined} alt={assigneeName} />
+        <AvatarFallback className="text-[10px]">{initials}</AvatarFallback>
+      </Avatar>
+      <div className="min-w-[180px] flex-1">
+        <div className="flex flex-wrap items-center gap-2">
+          <h3 className="font-medium">{displayTitle}</h3>
+          {overdue ? (
+            <Badge variant="destructive">Atrasada</Badge>
+          ) : dueToday ? (
+            <Badge className="bg-amber-500 text-white">Hoje</Badge>
+          ) : taskAvailable ? (
+            <Badge variant="secondary">Tarefa criada</Badge>
+          ) : (
+            <Badge variant="outline">Prevista</Badge>
+          )}
+        </div>
+        <p className="mt-0.5 text-xs text-muted-foreground">
+          {assigneeName} · {formatRecurrence(obligation)}
+          {occurrence.due_time ? ` · ${occurrence.due_time.slice(0, 5)}` : ""}
+        </p>
+      </div>
+      <div className="flex shrink-0 gap-2">
+        {taskAvailable ? (
+          <Button variant="outline" size="sm" onClick={onOpenTask}>
+            <ExternalLink className="mr-1.5 h-3.5 w-3.5" />
+            Abrir tarefa
+          </Button>
+        ) : (
+          <Button variant="outline" size="sm" disabled={working} onClick={onCreateTask}>
+            {working ? (
+              <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Plus className="mr-1.5 h-3.5 w-3.5" />
+            )}
+            Criar tarefa
+          </Button>
+        )}
+        <Button size="sm" disabled={working} onClick={onComplete}>
+          <CheckCircle2 className="mr-1.5 h-3.5 w-3.5" />
+          Concluir
+        </Button>
+      </div>
+    </Card>
   );
 }
 
-/** Membros de cada departamento: preenchem os participantes das reuniões novas. */
-function DepartmentsDialog({
-  open,
-  onOpenChange,
-  departments,
-  members,
-  profiles,
-  obligations,
+function ObligationsCalendar({
+  cursor,
+  onCursorChange,
+  occurrences,
+  obligationById,
+  onOccurrenceClick,
 }: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-  departments: ObligationDepartment[];
-  members: DepartmentMember[];
-  profiles: Profile[];
-  obligations: Obligation[];
+  cursor: Date;
+  onCursorChange: (date: Date) => void;
+  occurrences: ObligationOccurrence[];
+  obligationById: Map<string, Obligation>;
+  onOccurrenceClick: (occurrence: ObligationOccurrence) => void;
 }) {
-  const queryClient = useQueryClient();
-  const { user, activeWorkspace } = useAuth();
-  const [savingKey, setSavingKey] = useState<string | null>(null);
-  const [newName, setNewName] = useState("");
-  const [creating, setCreating] = useState(false);
-  const [editingId, setEditingId] = useState<string | null>(null);
-  const [editName, setEditName] = useState("");
-  const [renaming, setRenaming] = useState(false);
-  const [deleteTarget, setDeleteTarget] = useState<ObligationDepartment | null>(null);
-  const [deleting, setDeleting] = useState(false);
-  const targetMeetings = deleteTarget
-    ? obligations.filter((obligation) => obligation.department_id === deleteTarget.id)
-    : [];
-
-  const createDepartment = async () => {
-    const name = newName.trim();
-    if (!name) return;
-    if (isOffline()) return toast.error("Conecte-se à internet para criar o departamento.");
-    if (
-      departments.some(
-        (department) =>
-          department.name.trim().toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"),
-      )
-    )
-      return toast.error("Já existe um departamento com esse nome.");
-    setCreating(true);
-    const { error } = await (supabase.from("obligation_departments" as any) as any).insert({
-      name,
-      workspace_id: activeWorkspace?.id,
-      created_by: user?.id,
-      position: Math.max(0, ...departments.map((department) => department.position)) + 1,
-    });
-    setCreating(false);
-    if (error) return toast.error(error.message);
-    setNewName("");
-    await queryClient.invalidateQueries({ queryKey: ["obligation-departments"] });
-    toast.success("Departamento criado");
-  };
-
-  // Reuniões chamadas "Reunião — <nome antigo>" acompanham o novo nome.
-  const renameDepartment = async (department: ObligationDepartment) => {
-    const name = editName.trim();
-    if (!name || name === department.name) return setEditingId(null);
-    if (isOffline()) return toast.error("Conecte-se à internet para renomear o departamento.");
-    if (
-      departments.some(
-        (other) =>
-          other.id !== department.id &&
-          other.name.trim().toLocaleLowerCase("pt-BR") === name.toLocaleLowerCase("pt-BR"),
-      )
-    )
-      return toast.error("Já existe um departamento com esse nome.");
-    setRenaming(true);
-    const { error } = await (supabase.from("obligation_departments" as any) as any)
-      .update({ name })
-      .eq("id", department.id);
-    if (error) {
-      setRenaming(false);
-      return toast.error(error.message);
-    }
-    const oldTitle = `Reunião — ${department.name}`;
-    const meetingsToRename = obligations.filter(
-      (obligation) => obligation.department_id === department.id && obligation.title === oldTitle,
-    );
-    if (meetingsToRename.length > 0) {
-      const { error: titleError } = await (supabase.from("obligations" as any) as any)
-        .update({ title: `Reunião — ${name}` })
-        .in(
-          "id",
-          meetingsToRename.map((obligation) => obligation.id),
-        );
-      if (titleError) toast.error(`Departamento renomeado, mas a reunião manteve o nome antigo.`);
-    }
-    setRenaming(false);
-    setEditingId(null);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["obligation-departments"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligations"] }),
-    ]);
-    toast.success("Departamento renomeado");
-  };
-
-  // As reuniões do departamento saem junto; as tarefas já geradas continuam existindo.
-  const confirmDelete = async () => {
-    if (!deleteTarget) return;
-    if (isOffline()) return toast.error("Conecte-se à internet para excluir o departamento.");
-    setDeleting(true);
-    if (targetMeetings.length > 0) {
-      const { error } = await (supabase.from("obligations" as any) as any).delete().in(
-        "id",
-        targetMeetings.map((obligation) => obligation.id),
-      );
-      if (error) {
-        setDeleting(false);
-        return toast.error(error.message);
-      }
-    }
-    const { error } = await (supabase.from("obligation_departments" as any) as any)
-      .delete()
-      .eq("id", deleteTarget.id);
-    setDeleting(false);
-    if (error) return toast.error(error.message);
-    setDeleteTarget(null);
-    await Promise.all([
-      queryClient.invalidateQueries({ queryKey: ["obligation-departments"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligation-department-members"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligations"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligation-occurrences"] }),
-      queryClient.invalidateQueries({ queryKey: ["obligation-agenda-items"] }),
-    ]);
-    toast.success("Departamento excluído");
-  };
-
-  const toggleMember = async (departmentId: string, userId: string, isMember: boolean) => {
-    if (isOffline()) return toast.error("Conecte-se à internet para alterar os membros.");
-    setSavingKey(`${departmentId}:${userId}`);
-    const table = supabase.from("obligation_department_members" as any) as any;
-    const { error } = isMember
-      ? await table.delete().eq("department_id", departmentId).eq("user_id", userId)
-      : await table.insert({ department_id: departmentId, user_id: userId });
-    setSavingKey(null);
-    if (error) return toast.error(error.message);
-    await queryClient.invalidateQueries({ queryKey: ["obligation-department-members"] });
-  };
-
+  const days = useMemo(
+    () =>
+      eachDayOfInterval({
+        start: startOfWeek(startOfMonth(cursor), { weekStartsOn: 1 }),
+        end: endOfWeek(endOfMonth(cursor), { weekStartsOn: 1 }),
+      }),
+    [cursor],
+  );
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] overflow-y-auto sm:max-w-2xl">
-        <DialogHeader>
-          <DialogTitle>Departamentos</DialogTitle>
-          <DialogDescription>
-            Os membros de cada departamento entram automaticamente como participantes ao criar uma
-            reunião desse departamento. Você ainda pode ajustar os participantes de cada reunião.
-          </DialogDescription>
-        </DialogHeader>
-        <form
-          className="flex gap-2"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void createDepartment();
-          }}
-        >
-          <Input
-            value={newName}
-            onChange={(event) => setNewName(event.target.value)}
-            placeholder="Nome do novo departamento"
-            aria-label="Nome do novo departamento"
-            disabled={creating}
-          />
-          <Button type="submit" disabled={creating || !newName.trim()} className="shrink-0">
-            {creating ? (
-              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-            ) : (
-              <Plus className="mr-2 h-4 w-4" />
-            )}
-            Criar
+    <Card className="overflow-hidden">
+      <div className="flex items-center justify-between border-b p-3">
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => onCursorChange(subMonths(cursor, 1))}
+          >
+            <ChevronLeft className="h-4 w-4" />
           </Button>
-        </form>
-        {departments.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            Nenhum departamento ainda. Crie o primeiro acima.
-          </p>
-        ) : (
-          <ul className="space-y-2">
-            {departments.map((department) => {
-              const memberIds = members
-                .filter((member) => member.department_id === department.id)
-                .map((member) => member.user_id);
-              return (
-                <li key={department.id} className="rounded-xl border p-3">
-                  <div className="flex flex-wrap items-center justify-between gap-2">
-                    {editingId === department.id ? (
-                      <form
-                        className="flex min-w-0 flex-1 items-center gap-2"
-                        onSubmit={(event) => {
-                          event.preventDefault();
-                          void renameDepartment(department);
-                        }}
-                      >
-                        <Input
-                          value={editName}
-                          onChange={(event) => setEditName(event.target.value)}
-                          onKeyDown={(event) => {
-                            if (event.key === "Escape") {
-                              event.stopPropagation();
-                              setEditingId(null);
-                            }
-                          }}
-                          aria-label="Novo nome do departamento"
-                          className="h-8"
-                          disabled={renaming}
-                          autoFocus
-                        />
-                        <Button
-                          type="submit"
-                          size="sm"
-                          className="h-8 shrink-0"
-                          disabled={renaming || !editName.trim()}
-                        >
-                          {renaming && <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />}
-                          Salvar
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="ghost"
-                          className="h-8 shrink-0"
-                          disabled={renaming}
-                          onClick={() => setEditingId(null)}
-                        >
-                          Cancelar
-                        </Button>
-                      </form>
-                    ) : (
-                      <span className="flex min-w-0 items-center gap-2 font-medium">
-                        <span
-                          className="h-3 w-3 shrink-0 rounded-sm"
-                          style={{ backgroundColor: department.color || "#64748b" }}
-                        />
-                        <span className="truncate">{department.name}</span>
-                        <Button
-                          size="icon"
-                          variant="ghost"
-                          className="h-7 w-7 shrink-0 text-muted-foreground"
-                          aria-label={`Renomear o departamento ${department.name}`}
-                          title="Renomear departamento"
-                          onClick={() => {
-                            setEditingId(department.id);
-                            setEditName(department.name);
-                          }}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      </span>
-                    )}
-                    <div className="flex items-center gap-1">
-                      <Popover>
-                        <PopoverTrigger asChild>
-                          <Button size="sm" variant="outline" className="h-7">
-                            <Users className="mr-1.5 h-3.5 w-3.5" /> Membros ({memberIds.length})
-                          </Button>
-                        </PopoverTrigger>
-                        <PopoverContent align="end" className="w-72 p-1">
-                          <div className="max-h-64 overflow-y-auto">
-                            {profiles.map((profile) => {
-                              const isMember = memberIds.includes(profile.id);
-                              return (
-                                <label
-                                  key={profile.id}
-                                  className="flex cursor-pointer items-center gap-2 rounded-md px-2 py-1.5 text-sm hover:bg-accent"
-                                >
-                                  <Checkbox
-                                    checked={isMember}
-                                    disabled={savingKey === `${department.id}:${profile.id}`}
-                                    onCheckedChange={() =>
-                                      void toggleMember(department.id, profile.id, isMember)
-                                    }
-                                  />
-                                  <span className="truncate">
-                                    {profile.full_name || profile.email}
-                                  </span>
-                                </label>
-                              );
-                            })}
-                          </div>
-                        </PopoverContent>
-                      </Popover>
-                      <Button
-                        size="icon"
-                        variant="ghost"
-                        className="h-7 w-7 text-muted-foreground hover:text-destructive"
-                        aria-label={`Excluir o departamento ${department.name}`}
-                        title="Excluir departamento"
-                        onClick={() => setDeleteTarget(department)}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-xs text-muted-foreground">
-                    {memberIds.length > 0
-                      ? memberIds
-                          .map((id) => {
-                            const profile = profiles.find((item) => item.id === id);
-                            return profile?.full_name || profile?.email;
-                          })
-                          .filter(Boolean)
-                          .join(", ")
-                      : "Sem membros."}
-                  </p>
-                </li>
-              );
-            })}
-          </ul>
-        )}
-      </DialogContent>
-      <AlertDialog
-        open={!!deleteTarget}
-        onOpenChange={(open) => {
-          if (!open && !deleting) setDeleteTarget(null);
-        }}
-      >
-        <AlertDialogContent>
-          <AlertDialogHeader>
-            <AlertDialogTitle>Excluir o departamento {deleteTarget?.name}?</AlertDialogTitle>
-            <AlertDialogDescription asChild>
-              <div className="space-y-2">
-                {targetMeetings.length > 0 ? (
-                  <>
-                    <p>
-                      {targetMeetings.length === 1
-                        ? "A reunião recorrente deste departamento também será excluída, com as reuniões agendadas e as pautas:"
-                        : `As ${targetMeetings.length} reuniões recorrentes deste departamento também serão excluídas, com as reuniões agendadas e as pautas:`}
-                    </p>
-                    <ul className="list-disc pl-5 font-medium text-foreground">
-                      {targetMeetings.map((obligation) => (
-                        <li key={obligation.id}>{obligation.title}</li>
-                      ))}
-                    </ul>
-                    <p>As tarefas já geradas continuam existindo.</p>
-                  </>
-                ) : (
-                  <p>
-                    O departamento não tem reuniões. Os membros cadastrados nele serão removidos.
-                  </p>
-                )}
-              </div>
-            </AlertDialogDescription>
-          </AlertDialogHeader>
-          <AlertDialogFooter>
-            <AlertDialogCancel disabled={deleting}>Cancelar</AlertDialogCancel>
-            <AlertDialogAction
-              disabled={deleting}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-              onClick={(event) => {
-                event.preventDefault();
-                void confirmDelete();
-              }}
+          <Button
+            variant="outline"
+            size="icon"
+            className="h-8 w-8"
+            onClick={() => onCursorChange(addMonths(cursor, 1))}
+          >
+            <ChevronRight className="h-4 w-4" />
+          </Button>
+          <Button variant="ghost" size="sm" onClick={() => onCursorChange(new Date())}>
+            Hoje
+          </Button>
+        </div>
+        <h3 className="font-semibold capitalize">
+          {format(cursor, "MMMM yyyy", { locale: ptBR })}
+        </h3>
+      </div>
+      <div className="grid grid-cols-7 border-b bg-muted/40 text-center text-[10px] font-medium uppercase text-muted-foreground">
+        {["Seg", "Ter", "Qua", "Qui", "Sex", "Sáb", "Dom"].map((day) => (
+          <div key={day} className="p-2">
+            {day}
+          </div>
+        ))}
+      </div>
+      <div className="grid grid-cols-7">
+        {days.map((day) => {
+          const items = occurrences.filter((occurrence) =>
+            isSameDay(new Date(`${occurrence.due_date}T12:00:00`), day),
+          );
+          return (
+            <div
+              key={day.toISOString()}
+              className={`min-h-28 border-b border-r p-1.5 ${isSameMonth(day, cursor) ? "" : "bg-muted/20 text-muted-foreground"}`}
             >
-              {deleting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-              {deleting ? "Excluindo..." : "Excluir"}
-            </AlertDialogAction>
-          </AlertDialogFooter>
-        </AlertDialogContent>
-      </AlertDialog>
-    </Dialog>
+              <span
+                className={`inline-grid h-6 min-w-6 place-items-center rounded-full text-xs ${isSameDay(day, new Date()) ? "bg-primary font-semibold text-primary-foreground" : ""}`}
+              >
+                {format(day, "d")}
+              </span>
+              <div className="mt-1 space-y-1">
+                {items.slice(0, 4).map((occurrence) => {
+                  const obligation = obligationById.get(occurrence.obligation_id);
+                  if (!obligation) return null;
+                  return (
+                    <button
+                      key={occurrence.id}
+                      type="button"
+                      onClick={() => onOccurrenceClick(occurrence)}
+                      className="block w-full truncate rounded bg-primary px-1.5 py-1 text-left text-[10px] font-medium text-primary-foreground shadow-sm hover:brightness-105"
+                      title={obligation.title}
+                    >
+                      {obligation.title}
+                    </button>
+                  );
+                })}
+                {items.length > 4 ? (
+                  <span className="block text-[10px] font-medium text-primary">
+                    +{items.length - 4} mais
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
   );
 }
 
@@ -1748,4 +1614,31 @@ function formatRecurrence(obligation: Obligation) {
       ? "Último dia útil do mês"
       : `Último dia útil a cada ${obligation.interval_count} meses`;
   return `${obligation.interval_count === 1 ? "Mensal" : `A cada ${obligation.interval_count} meses`} · dia${obligation.days_of_month.length > 1 ? "s" : ""} ${obligation.days_of_month.join(" e ")}`;
+}
+
+function deleteDialogTitle(target: DeleteTarget | null) {
+  if (target?.scope === "occurrences") return "Excluir os vencimentos selecionados?";
+  if (target?.scope === "series") return "Excluir toda esta obrigação?";
+  if (target?.scope === "series-batch") {
+    return target.obligations.length === 1
+      ? "Excluir a obrigação inteira?"
+      : "Excluir as obrigações inteiras?";
+  }
+  if (target?.scope === "all") return "Excluir todas as obrigações?";
+  return "Excluir obrigação?";
+}
+
+function deleteDialogDescription(target: DeleteTarget | null) {
+  if (target?.scope === "occurrences") {
+    return `${target.occurrences.length} vencimento(s) selecionado(s) serão removidos. Os demais vencimentos das séries continuarão normalmente.`;
+  }
+  if (target?.scope === "series") {
+    return `A obrigação “${target.obligation.title}” e todos os vencimentos dela serão excluídos. Tarefas que já foram geradas serão preservadas.`;
+  }
+  if (target?.scope === "series-batch") {
+    return target.obligations.length === 1
+      ? `A obrigação “${target.obligations[0].title}” e todos os vencimentos dela serão excluídos. Tarefas que já foram geradas serão preservadas.`
+      : `${target.obligations.length} obrigações envolvidas na seleção e todos os vencimentos delas serão excluídos. Tarefas que já foram geradas serão preservadas.`;
+  }
+  return "Todas as obrigações e seus vencimentos serão excluídos deste ambiente. Tarefas que já foram geradas serão preservadas.";
 }

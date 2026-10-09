@@ -9,37 +9,14 @@ import {
 } from "@/hooks/use-data";
 import { useWorkspaceTasks } from "@/hooks/use-workspace-tasks";
 import { DateFilterBar } from "@/components/DateFilterBar";
+import { TaskDialog } from "@/components/TaskDialog";
 import { matchDateFilter, priorityLabels, statusLabels, type DateFilter } from "@/lib/task-utils";
-import {
-  countCompletedSubtasks,
-  subtaskStatus,
-  subtaskStatusLabels,
-  type SubtaskStatus,
-} from "@/lib/subtask-status";
 import { Card } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { RichTextView } from "@/components/RichTextEditor";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from "recharts";
-import {
-  CheckCircle2,
-  ListTodo,
-  AlertTriangle,
-  Clock,
-  X,
-  CalendarDays,
-  CircleCheck,
-  Flag,
-  UserRound,
-} from "lucide-react";
+import { CheckCircle2, ListTodo, AlertTriangle, Clock, X, CalendarDays } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { format, parseISO } from "date-fns";
 import { ptBR } from "date-fns/locale";
@@ -59,162 +36,6 @@ type Detail = {
 };
 
 const isTaskDone = (task: Task) => task.status === "done" || !!task.completed_at;
-
-const SUBTASK_DOT: Record<SubtaskStatus, string> = {
-  concluida: "bg-emerald-500",
-  atrasada: "bg-rose-500",
-  sem_prazo: "bg-slate-400",
-  pendente: "bg-amber-500",
-};
-
-const SUBTASK_BADGE: Record<SubtaskStatus, string> = {
-  concluida: "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/35 dark:text-emerald-300",
-  atrasada: "bg-rose-50 text-rose-700 dark:bg-rose-950/35 dark:text-rose-300",
-  sem_prazo: "bg-muted text-muted-foreground",
-  pendente: "bg-amber-50 text-amber-800 dark:bg-amber-950/35 dark:text-amber-300",
-};
-
-function TaskPreviewDialog({
-  task,
-  profilesById,
-  onOpenChange,
-}: {
-  task: Task | null;
-  profilesById: Map<string, string>;
-  onOpenChange: (open: boolean) => void;
-}) {
-  const { data: allSubtasks } = useSubtasks();
-  // O hook fica acima do early return de propósito: chamá-lo depois mudaria a
-  // quantidade de hooks entre um render e outro quando o diálogo fecha.
-  const subtasks = useMemo(
-    () => (allSubtasks ?? []).filter((subtask) => subtask.task_id === task?.id),
-    [allSubtasks, task?.id],
-  );
-  const contagem = countCompletedSubtasks(subtasks);
-
-  if (!task) return null;
-
-  const done = isTaskDone(task);
-  const assigneeName = task.assignee_id ? profilesById.get(task.assignee_id) : null;
-  const formatDate = (value: string | null) =>
-    value ? format(parseISO(value), "dd/MM/yyyy", { locale: ptBR }) : "—";
-
-  return (
-    <Dialog open={Boolean(task)} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-2xl overflow-y-auto">
-        <DialogHeader className="border-b pb-4 pr-7">
-          <div className="flex flex-wrap items-start gap-2">
-            <DialogTitle className="mr-auto text-xl leading-snug">{task.title}</DialogTitle>
-            {task.priority && (
-              <span className="rounded-full bg-muted px-2.5 py-1 text-xs text-muted-foreground">
-                {priorityLabels[task.priority]}
-              </span>
-            )}
-            <span
-              className={`rounded-full px-2.5 py-1 text-xs ${done ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/35 dark:text-emerald-300" : "bg-muted text-muted-foreground"}`}
-            >
-              {done ? "Concluída" : statusLabels[task.status ?? "todo"]}
-            </span>
-          </div>
-          <DialogDescription>Visualização da tarefa no Dashboard.</DialogDescription>
-        </DialogHeader>
-
-        <div className="grid gap-5 sm:grid-cols-2">
-          <div>
-            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <UserRound className="h-3.5 w-3.5" /> Consultor responsável
-            </p>
-            <p className="mt-1.5 font-medium">{assigneeName || "Sem consultor responsável"}</p>
-          </div>
-          <div>
-            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <CalendarDays className="h-3.5 w-3.5" /> Prazo
-            </p>
-            <p className="mt-1.5 font-medium">{formatDate(task.due_date)}</p>
-          </div>
-          <div>
-            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <CircleCheck className="h-3.5 w-3.5" /> Conclusão
-            </p>
-            <p className="mt-1.5 font-medium">
-              {done ? formatDate(task.completed_at) : "Ainda não concluída"}
-            </p>
-          </div>
-          <div>
-            <p className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              <Flag className="h-3.5 w-3.5" /> Criada em
-            </p>
-            <p className="mt-1.5 font-medium">{formatDate(task.created_at)}</p>
-          </div>
-        </div>
-
-        <div className="border-t pt-5">
-          <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Descrição
-          </p>
-          {task.description?.trim() ? (
-            <RichTextView html={task.description} className="mt-2 text-sm leading-6 [&_p]:my-2" />
-          ) : (
-            <p className="mt-2 text-sm text-muted-foreground">Esta tarefa não possui descrição.</p>
-          )}
-        </div>
-
-        <div className="border-t pt-5">
-          <p className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-            Subtarefas
-            {subtasks.length > 0 ? (
-              <span className="rounded-full bg-muted px-2 py-0.5 text-[11px] font-medium normal-case tracking-normal">
-                {contagem.done} de {contagem.total} concluídas
-              </span>
-            ) : null}
-          </p>
-          {subtasks.length === 0 ? (
-            <p className="mt-2 text-sm text-muted-foreground">Esta tarefa não possui subtarefas.</p>
-          ) : (
-            <ul className="mt-3 space-y-2">
-              {subtasks.map((subtask) => {
-                const situacao = subtaskStatus(subtask);
-                const responsavel = subtask.assignee_id
-                  ? profilesById.get(subtask.assignee_id)
-                  : null;
-                return (
-                  <li
-                    key={subtask.id}
-                    className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border bg-muted/20 px-3 py-2"
-                  >
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${SUBTASK_DOT[situacao]}`} />
-                    <span
-                      className={`min-w-0 flex-1 break-words text-sm ${
-                        subtask.done ? "text-muted-foreground line-through" : ""
-                      }`}
-                    >
-                      {subtask.title}
-                    </span>
-                    <span
-                      className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${SUBTASK_BADGE[situacao]}`}
-                    >
-                      {subtaskStatusLabels[situacao]}
-                    </span>
-                    {subtask.due_date ? (
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {formatDate(subtask.due_date)}
-                      </span>
-                    ) : null}
-                    {responsavel ? (
-                      <span className="shrink-0 text-[11px] text-muted-foreground">
-                        {responsavel}
-                      </span>
-                    ) : null}
-                  </li>
-                );
-              })}
-            </ul>
-          )}
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
 
 function Stat({
   label,
@@ -274,7 +95,7 @@ function TaskDetailPanel({
   profilesById: Map<string, string>;
   onClose: () => void;
 }) {
-  const [previewTask, setPreviewTask] = useState<Task | null>(null);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
   const orderedTasks = useMemo(
     () =>
       [...detail.tasks].sort((a, b) => {
@@ -324,7 +145,7 @@ function TaskDetailPanel({
                 <div key={task.id} className="text-sm">
                   <button
                     type="button"
-                    onClick={() => setPreviewTask(task)}
+                    onClick={() => setSelectedTask(task)}
                     className="flex w-full flex-wrap items-center justify-between gap-x-5 gap-y-2 px-5 py-3 text-left transition hover:bg-muted/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-primary"
                   >
                     <div className="min-w-0 flex-1">
@@ -358,10 +179,10 @@ function TaskDetailPanel({
           </div>
         )}
       </Card>
-      <TaskPreviewDialog
-        task={previewTask}
-        profilesById={profilesById}
-        onOpenChange={(open) => !open && setPreviewTask(null)}
+      <TaskDialog
+        open={Boolean(selectedTask)}
+        task={selectedTask}
+        onOpenChange={(open) => !open && setSelectedTask(null)}
       />
     </>
   );

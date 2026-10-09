@@ -31,7 +31,7 @@ export interface Obligation {
   meeting_mode: boolean;
   /** Dias de antecedência do aviso aos participantes. */
   reminder_days_before: number;
-  /** Cria uma tarefa por item da pauta `create_before_days` dias antes da reunião. */
+  /** Campo legado mantido no banco; reuniões novas sempre salvam esta opção desligada. */
   auto_create_tasks: boolean;
   is_active: boolean;
   created_by: string;
@@ -215,16 +215,16 @@ export function useAllObligationTaskTemplates() {
   });
 }
 
-export function useObligations() {
+export function useObligations(meetingMode?: boolean) {
   const { user, activeWorkspace } = useAuth();
   useObligationRealtime();
   return useQuery({
-    queryKey: ["obligations", activeWorkspace?.id],
+    queryKey: ["obligations", activeWorkspace?.id, meetingMode],
     enabled: !!user && !!activeWorkspace?.id,
     queryFn: async () => {
-      const { data, error } = await (supabase.from("obligations" as any) as any)
-        .select("*")
-        .order("title", { ascending: true });
+      let request = (supabase.from("obligations" as any) as any).select("*");
+      if (typeof meetingMode === "boolean") request = request.eq("meeting_mode", meetingMode);
+      const { data, error } = await request.order("title", { ascending: true });
       if (error) throw error;
       return (data ?? []) as Obligation[];
     },
@@ -232,23 +232,28 @@ export function useObligations() {
 }
 
 /** Reuniões de um ano para trás até seis meses à frente. */
-export function useObligationOccurrences() {
+export function useObligationOccurrences(meetingMode?: boolean) {
   const { user, activeWorkspace } = useAuth();
   return useQuery({
-    queryKey: ["obligation-occurrences", activeWorkspace?.id],
+    queryKey: ["obligation-occurrences", activeWorkspace?.id, meetingMode],
     enabled: !!user && !!activeWorkspace?.id,
     queryFn: async () => {
       const from = new Date();
       from.setFullYear(from.getFullYear() - 1);
       const until = new Date();
       until.setMonth(until.getMonth() + 7);
-      const { data, error } = await (supabase.from("obligation_occurrences" as any) as any)
-        .select("*")
+      let request = (supabase.from("obligation_occurrences" as any) as any)
+        .select("*, obligations!inner(meeting_mode)")
         .gte("due_date", from.toISOString().slice(0, 10))
-        .lte("due_date", until.toISOString().slice(0, 10))
-        .order("due_date", { ascending: true });
+        .lte("due_date", until.toISOString().slice(0, 10));
+      if (typeof meetingMode === "boolean") {
+        request = request.eq("obligations.meeting_mode", meetingMode);
+      }
+      const { data, error } = await request.order("due_date", { ascending: true });
       if (error) throw error;
-      return (data ?? []) as ObligationOccurrence[];
+      return ((data ?? []) as Array<ObligationOccurrence & { obligations?: unknown }>).map(
+        ({ obligations: _obligation, ...occurrence }) => occurrence as ObligationOccurrence,
+      );
     },
   });
 }
